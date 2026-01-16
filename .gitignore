@@ -1,0 +1,219 @@
+# ==============================================================================
+# Green Innovation Project .gitignore
+# ==============================================================================
+
+# ==============================================================================
+# DATA FILES (never commit raw or processed data to version control)
+# ==============================================================================
+
+# Data directories
+data/
+raw_data/
+processed_data/
+dados/
+dados_brutos/
+dados_processados/
+
+# Common data file formats
+*.csv
+*.dta
+*.sav
+*.rds
+*.RData
+*.Rdata
+*.rdata
+*.xlsx
+*.xls
+*.dbf
+*.shp
+*.shx
+*.prj
+*.sbn
+*.sbx
+
+# Compressed data files
+*.zip
+*.tar
+*.gz
+*.7z
+*.rar
+
+# NetCDF climate data
+*.nc
+*.nc4
+
+# ==============================================================================
+# OUTPUT FILES
+# ==============================================================================
+
+# Output directories
+output/
+figures/
+tables/
+logs/
+results/
+resultados/
+
+# Generated figures
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.eps
+*.svg
+*.tiff
+
+# LaTeX output
+*.tex
+*.aux
+*.log
+*.bbl
+*.blg
+*.out
+*.synctex.gz
+
+# ==============================================================================
+# R FILES
+# ==============================================================================
+
+# History files
+.Rhistory
+.Rapp.history
+
+# Session Data files
+.RData
+.Rdata
+
+# User-specific files
+.Ruserdata
+
+# RStudio files
+.Rproj.user/
+*.Rproj
+
+# OAuth tokens (if using web-based authentication)
+.httr-oauth
+
+# Knitr and R Markdown
+*.utf8.md
+*.knit.md
+.Rproj.user
+*_cache/
+/cache/
+
+# Temporary files
+*~
+.Rproj.user
+
+# pkgdown site
+# docs/ - COMMENTED OUT: We use docs/ for project documentation, not pkgdown
+
+# Translation temp files
+po/*~
+
+# ==============================================================================
+# STATA FILES
+# ==============================================================================
+
+# Stata log files
+*.log
+*.smcl
+
+# Stata temporary files
+*.stswp
+*.gph
+
+# Stata recovered/backup files
+*[Recovered].do
+*[Autosaved].do
+
+# ==============================================================================
+# PYTHON FILES (if using Python for any processing)
+# ==============================================================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# ==============================================================================
+# OPERATING SYSTEM FILES
+# ==============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# ==============================================================================
+# IDE AND EDITOR FILES
+# ==============================================================================
+
+# VSCode
+.vscode/
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ==============================================================================
+# PROJECT-SPECIFIC EXCLUSIONS
+# ==============================================================================
+
+# Temporary analysis files
+temp/
+tmp/
+scratch/
+
+# Large intermediate files
+*_intermediate.rds
+*_temp.rds
+
+# Personal notes (if kept in repo)
+notes_private/
+personal_notes/
+
+# API keys and credentials
+.env
+credentials.json
+secrets.json
+*.key
+
+# ==============================================================================
+# EXCEPTIONS (files to track despite above rules)
+# ==============================================================================
+
+# Keep specific documentation or small sample data if needed
+# !data/sample_data.csv
+# !docs/codebook.xlsx
+
+# Keep empty directories by tracking .gitkeep files
+!.gitkeep
