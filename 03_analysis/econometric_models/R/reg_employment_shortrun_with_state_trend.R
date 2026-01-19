@@ -15,12 +15,14 @@
 library(haven)        # For reading Stata files
 library(dplyr)        # For data manipulation
 library(fixest)       # For high-dimensional fixed effects
-library(conleyreg)    # For Conley spatial standard errors
 library(sandwich)     # For robust standard errors
 library(lmtest)       # For coefficient testing
 library(data.table)   # For efficient data manipulation
 library(stargazer)    # For LaTeX table generation
 library(lfe)          # For fast two-way demeaning
+
+# Source our custom Conley + Newey-West HAC function
+source("03_analysis/econometric_models/R/conley_newey_west.R")
 
 # ============================================================================
 # STEP ONE: LOAD AND PREPARE DATA
@@ -193,38 +195,45 @@ for(i in 1:length(dep_vars)) {
 
   cat("    Observations for this model:", nrow(data_model), "\n")
 
-  # Formula for Conley with TWO-WAY demeaned variables
-  # CRITICAL: NO year dummies! They were already removed by two-way demeaning
-  # This matches Stata's reg2hdfe + ols_spatial_HAC behavior exactly
-  formula_conley <- as.formula(paste0(
-    dv, "_dm ~ cont_shock_temp_dm + cont_shock_precip_dm + year_state_trend_dm - 1"
-  ))
-
-  cat("    Formula:", deparse(formula_conley), "\n")
-
-  # Run Conley regression
+  # Run Conley + Newey-West HAC regression
+  # CRITICAL: This replicates ols_spatial_HAC.ado EXACTLY
+  # - First calculates spatial correlation (Conley 1999)
+  # - Then adds serial correlation (Newey-West 1987)
   tryCatch({
-    # Convert to data.frame for conleyreg (it doesn't work well with data.table)
-    data_model_df <- as.data.frame(data_model)
+    # Prepare variables for HAC function
+    Y_dm <- data_model[[paste0(dv, "_dm")]]
+    X_dm <- as.matrix(data_model[, c(paste0("cont_shock_temp_dm"),
+                                      paste0("cont_shock_precip_dm"),
+                                      paste0("year_state_trend_dm"))])
 
-    conley_model <- conleyreg::conleyreg(
-      formula = formula_conley,
-      data = data_model_df,
-      lat = "lat",
-      lon = "lon",
-      dist_cutoff = 250,    # 250 km spatial correlation
-      lag_cutoff = 7        # 7-year temporal correlation
-                            # Stata lagcutoff(6) uses formula: w(L) = 1 - L/7
-                            # This considers lags L=0,1,2,3,4,5,6 (7 values total)
-                            # Hence "7-year lags" in the paper
+    cat("    Applying Conley + Newey-West HAC...\n")
+
+    # Call our custom function that replicates ols_spatial_HAC.ado
+    hac_result <- conley_newey_west_hac(
+      Y = Y_dm,
+      X = X_dm,
+      lat = data_model$lat,
+      lon = data_model$lon,
+      time = data_model$year,
+      panel = data_model$mun_code,
+      dist_cutoff = 250,    # 250 km spatial correlation (Conley)
+      lag_cutoff = 6,       # 6-period lag cutoff (Newey-West)
+                            # Uses formula: w(L) = 1 - L/(lag_cutoff+1) = 1 - L/7
+                            # Considers L=0,1,2,3,4,5,6 (7 values = "7-year lags")
+      bartlett_spatial = FALSE  # Uniform kernel for spatial (default in Stata)
     )
 
-    # Extract Conley standard errors
-    conley_summary <- summary(conley_model)
-    se_conley <- conley_summary$coefficients[, "Std. Error"]
-    coefs_conley <- conley_summary$coefficients[, "Estimate"]
-    tstat_conley <- conley_summary$coefficients[, "t value"]
-    pval_conley <- conley_summary$coefficients[, "Pr(>|t|)"]
+    # Extract results
+    coefs_conley <- hac_result$coefficients
+    se_conley <- hac_result$se
+    tstat_conley <- coefs_conley / se_conley
+    pval_conley <- 2 * pt(-abs(tstat_conley), df = hac_result$n_obs - hac_result$k_vars)
+
+    # Name the coefficients
+    names(coefs_conley) <- c("cont_shock_temp_dm", "cont_shock_precip_dm", "year_state_trend_dm")
+    names(se_conley) <- names(coefs_conley)
+    names(tstat_conley) <- names(coefs_conley)
+    names(pval_conley) <- names(coefs_conley)
 
     # Store results
     results_list[[i]] <- list(
@@ -459,10 +468,10 @@ cat(rep("=", 70), "\n\n", sep = "")
 #    - Optimized in C for maximum performance (100x faster than R loops)
 #    - All variables (Y, X, year_state_trend) are demeaned with two-way FE
 #
-# 2. NO YEAR DUMMIES in Conley model: Year fixed effects are already removed by
-#    two-way demeaning, so we DON'T include year dummies in the Conley formula
-#    - Stata runs: ols_spatial_HAC Y X (on demeaned data, no year dummies)
-#    - R now runs: conleyreg(Y_dm ~ X_dm - 1) (same approach)
+# 2. SEPARATE SPATIAL AND SERIAL CORRELATION: Just like Stata's ols_spatial_HAC.ado
+#    - Step 1: Calculate spatial correlation (Conley 1999) within each time period
+#    - Step 2: Add serial correlation (Newey-West 1987) within each panel
+#    - Uses custom function conley_newey_west_hac() that replicates ols_spatial_HAC.ado exactly
 #
 # 3. lag_cutoff = 7: Matches Stata lagcutoff(6) behavior
 #    - Stata lagcutoff(6) uses Bartlett formula: w(L) = 1 - L/(lagcutoff+1) = 1 - L/7
