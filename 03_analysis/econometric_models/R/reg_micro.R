@@ -5,7 +5,7 @@
 # Load required packages
 library(haven)        # For reading Stata files
 library(dplyr)        # For data manipulation
-library(ConleySEs)    # For Conley spatial standard errors
+library(conleyreg)    # For Conley spatial standard errors
 library(lmtest)       # For coefficient testing
 library(data.table)   # For efficient data manipulation
 
@@ -51,17 +51,18 @@ formula1 <- prop_verde ~ cont_shock_temp + year_state_trend + urban +
             log_renda + alphabetization_rate
 model1 <- lm(formula1, data = data)
 
-# Note: For Conley spatial standard errors, you would use:
-# conley_se1 <- ConleySEs::ConleySEs(
-#   reg = model1,
-#   unit = data$id,
-#   time = data$round,
-#   lat = data$lat,
-#   lon = data$lon,
-#   dist_fn = "SH",
+# Note: For Conley spatial standard errors, you would use the conleyreg package:
+# See: https://cran.r-project.org/package=conleyreg
+# Example:
+# conley_model <- conleyreg::conleyreg(
+#   formula = formula1,
+#   data = data,
+#   id = "mun_code",
+#   time = "year",
+#   lat = "lat",
+#   lon = "lon",
 #   dist_cutoff = 250,
-#   lag_cutoff = 6,
-#   cores = 1
+#   lag_cutoff = 6
 # )
 print(summary(model1))
 
@@ -270,9 +271,9 @@ cat("Combined effect (temp + precip):", lincom_combined, "\n")
 
 cat("\n=== NOTE ===\n")
 cat("To implement Conley spatial standard errors (equivalent to reg2hdfespatial in Stata),\n")
-cat("uncomment the ConleySEs::ConleySEs() function calls in the code above.\n")
-cat("This requires the ConleySEs package to be installed:\n")
-cat("install.packages('ConleySEs')\n\n")
+cat("uncomment the conleyreg function calls in the code above.\n")
+cat("This requires the conleyreg package to be installed:\n")
+cat("install.packages('conleyreg')\n\n")
 cat("Alternative packages for spatial standard errors:\n")
 cat("- plm package with vcovHC for panel-robust SEs\n")
 cat("- fixest package with conley() function\n")

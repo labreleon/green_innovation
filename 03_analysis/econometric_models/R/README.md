@@ -74,7 +74,7 @@ install.packages("sandwich")     # Robust standard errors
 install.packages("lmtest")       # Coefficient testing
 
 # Spatial standard errors (choose one)
-install.packages("ConleySEs")    # Conley spatial HAC (recommended)
+install.packages("conleyreg")    # Conley spatial HAC (recommended)
 # OR
 install.packages("acreg")        # Alternative for Conley SEs
 
@@ -149,13 +149,13 @@ reg2hdfespatial y x1 x2, timevar(round) panelvar(id) lat(lat) lon(lon) distcutof
 
 **R:**
 ```r
-model <- lm(y ~ x1 + x2, data = data)
-conley_se <- ConleySEs::ConleySEs(
-  reg = model,
-  unit = data$id,
-  time = data$round,
-  lat = data$lat,
-  lon = data$lon,
+model <- conleyreg::conleyreg(
+  formula = y ~ x1 + x2,
+  data = data,
+  id = "id",
+  time = "round",
+  lat = "lat",
+  lon = "lon",
   dist_cutoff = 250,
   lag_cutoff = 6
 )
@@ -188,7 +188,7 @@ year_dummies <- model.matrix(~ factor(year) - 1, data = data)
 
 The original Stata code uses `reg2hdfespatial`, which implements Conley (1999) spatial HAC standard errors. In R, there are several options:
 
-1. **ConleySEs package** (Recommended)
+1. **conleyreg package** (Recommended)
    - Direct implementation of Conley spatial HAC
    - Handles panel data structure
    - Accounts for both spatial and temporal correlation
@@ -214,7 +214,7 @@ The original Stata code uses `reg2hdfespatial`, which implements Conley (1999) s
 library(haven)
 library(dplyr)
 library(fixest)
-library(ConleySEs)
+library(conleyreg)
 
 # 2. Source utility functions (optional)
 source("utility_functions.R")
@@ -244,12 +244,11 @@ print(results$obs_1)  # Number of observations for combination 1
 
 ## Troubleshooting
 
-### Issue: "Error: package 'ConleySEs' not available"
+### Issue: "Error: package 'conleyreg' not available"
 **Solution:**
 ```r
-# ConleySEs may need to be installed from GitHub
-# install.packages("devtools")
-devtools::install_github("darinchristensen/conley-se")
+# Install conleyreg from CRAN
+install.packages("conleyreg")
 ```
 
 ### Issue: "Error in read_dta(): file not found"
