@@ -40,8 +40,14 @@ if(!"prop_verde" %in% names(data) && "qtd_pat" %in% names(data) && "qtd_pat_verd
 }
 
 # Create state-year interaction variable for fixed effects
+# Create municipality-year interaction for fixed effects
+# Create state-year trend (year * code_state)
 data <- data %>%
-  mutate(state_year = interaction(code_state, year, drop = TRUE))
+  mutate(
+    state_year = interaction(code_state, year, drop = TRUE),
+    mun_year = interaction(mun_code, year, drop = TRUE),
+    year_state_trend = year * code_state
+  )
 
 cat("Variables prepared.\n")
 cat("States:", length(unique(data$code_state)), "\n")
@@ -61,6 +67,7 @@ dep_labels <- c("Total Patents", "Green Patents", "Prop. Green Patents")
 # Initialize results storage
 results_basic <- list()
 results_state_year <- list()
+results_mun_year_trend <- list()
 
 # Loop through each dependent variable
 for(i in 1:length(dep_vars)) {
@@ -133,6 +140,43 @@ for(i in 1:length(dep_vars)) {
   cat("  Precipitation p-val:", sprintf("%.4f", results_state_year[[i]]$pval_precip), "\n")
   cat("  Observations:       ", results_state_year[[i]]$n_obs, "\n")
   cat("  R²:                 ", sprintf("%.3f", results_state_year[[i]]$r2), "\n\n")
+
+  # -------------------------------------------------------------------------
+  # Model 3: Municipality-Year FE + State-Year Trends
+  # -------------------------------------------------------------------------
+
+  cat("\n[3] Mun-Year FE + State-Year Trends: Municipality×Year FE + State×Year Trends + Clustering Municipality\n")
+
+  formula_mun_year_trend <- as.formula(paste0(dv, " ~ cont_shock_temp + cont_shock_precip + year_state_trend | mun_year"))
+
+  model_mun_year_trend <- feols(formula_mun_year_trend, data = data, cluster = ~mun_code)
+
+  results_mun_year_trend[[i]] <- list(
+    model = model_mun_year_trend,
+    coef_temp = coef(model_mun_year_trend)["cont_shock_temp"],
+    se_temp = se(model_mun_year_trend)["cont_shock_temp"],
+    pval_temp = pvalue(model_mun_year_trend)["cont_shock_temp"],
+    coef_precip = coef(model_mun_year_trend)["cont_shock_precip"],
+    se_precip = se(model_mun_year_trend)["cont_shock_precip"],
+    pval_precip = pvalue(model_mun_year_trend)["cont_shock_precip"],
+    coef_trend = coef(model_mun_year_trend)["year_state_trend"],
+    se_trend = se(model_mun_year_trend)["year_state_trend"],
+    pval_trend = pvalue(model_mun_year_trend)["year_state_trend"],
+    n_obs = nobs(model_mun_year_trend),
+    r2 = r2(model_mun_year_trend, type = "r2"),
+    r2_adj = r2(model_mun_year_trend, type = "ar2")
+  )
+
+  cat("  Temperature coef:   ", sprintf("%.4f", results_mun_year_trend[[i]]$coef_temp), "\n")
+  cat("  Temperature SE:     ", sprintf("%.4f", results_mun_year_trend[[i]]$se_temp), "\n")
+  cat("  Temperature p-value:", sprintf("%.4f", results_mun_year_trend[[i]]$pval_temp), "\n")
+  cat("  Precipitation coef: ", sprintf("%.4f", results_mun_year_trend[[i]]$coef_precip), "\n")
+  cat("  Precipitation SE:   ", sprintf("%.4f", results_mun_year_trend[[i]]$se_precip), "\n")
+  cat("  Precipitation p-val:", sprintf("%.4f", results_mun_year_trend[[i]]$pval_precip), "\n")
+  cat("  State-Year Trend:   ", sprintf("%.4f", results_mun_year_trend[[i]]$coef_trend), "\n")
+  cat("  Trend SE:           ", sprintf("%.4f", results_mun_year_trend[[i]]$se_trend), "\n")
+  cat("  Observations:       ", results_mun_year_trend[[i]]$n_obs, "\n")
+  cat("  R²:                 ", sprintf("%.3f", results_mun_year_trend[[i]]$r2), "\n\n")
 }
 
 # ============================================================================
@@ -274,6 +318,115 @@ output_file <- "table_patents_municipal_cluster_comparison.tex"
 writeLines(latex_comparison, output_file)
 cat("LaTeX table saved to:", output_file, "\n")
 
+# -------------------------------------------------------------------------
+# TABLE 2: Municipality-Year Fixed Effects + State-Year Trends
+# -------------------------------------------------------------------------
+
+latex_mun_year_trend <- c(
+  "\\begin{table}[H]",
+  "\\centering",
+  "\\resizebox{0.75\\textwidth}{!}{%",
+  "\\begin{threeparttable}",
+  "\\caption{Municipality-Year Fixed Effects with State-Year Trends - Patents}",
+  "\\label{tab:patents_mun_year_trend}",
+  "\\begin{tabular}{lccc}",
+  "\\toprule",
+  "\\multicolumn{4}{c}{\\textbf{Weather Shocks and Patents - Municipality×Year FE + State Trends}}\\\\",
+  "\\midrule",
+  "Dependent Variable:",
+  paste0("  & (1) ", dep_labels[1]),
+  paste0("  & (2) ", dep_labels[2]),
+  paste0("  & (3) ", dep_labels[3], " \\\\"),
+  "\\midrule"
+)
+
+# Temperature coefficient
+temp_row <- "$T_{mt}$ (Temperature)"
+temp_se_row <- ""
+for(i in 1:3) {
+  coef_val <- results_mun_year_trend[[i]]$coef_temp
+  se_val <- results_mun_year_trend[[i]]$se_temp
+  pval <- results_mun_year_trend[[i]]$pval_temp
+  stars <- add_stars(pval)
+  digits <- ifelse(abs(coef_val) < 0.01, 4, 3)
+  temp_row <- paste0(temp_row, "  &   ", format_coef(coef_val, digits), stars)
+  temp_se_row <- paste0(temp_se_row, "  & (", format_coef(se_val, digits), ")")
+}
+temp_row <- paste0(temp_row, " \\\\")
+temp_se_row <- paste0(temp_se_row, "  \\\\[0.5em]")
+
+latex_mun_year_trend <- c(latex_mun_year_trend, temp_row, temp_se_row)
+
+# Precipitation coefficient
+precip_row <- "$P_{mt}$ (Precipitation)"
+precip_se_row <- ""
+for(i in 1:3) {
+  coef_val <- results_mun_year_trend[[i]]$coef_precip
+  se_val <- results_mun_year_trend[[i]]$se_precip
+  pval <- results_mun_year_trend[[i]]$pval_precip
+  stars <- add_stars(pval)
+  digits <- ifelse(abs(coef_val) < 0.01, 4, 3)
+  precip_row <- paste0(precip_row, "  &   ", format_coef(coef_val, digits), stars)
+  precip_se_row <- paste0(precip_se_row, "  & (", format_coef(se_val, digits), ")")
+}
+precip_row <- paste0(precip_row, " \\\\")
+precip_se_row <- paste0(precip_se_row, "  \\\\[0.5em]")
+
+latex_mun_year_trend <- c(latex_mun_year_trend, precip_row, precip_se_row)
+
+# State-Year Trend coefficient
+trend_row <- "$year \\times state$ (State-Year Trend)"
+trend_se_row <- ""
+for(i in 1:3) {
+  coef_val <- results_mun_year_trend[[i]]$coef_trend
+  se_val <- results_mun_year_trend[[i]]$se_trend
+  pval <- results_mun_year_trend[[i]]$pval_trend
+  stars <- add_stars(pval)
+  digits <- ifelse(abs(coef_val) < 0.01, 4, 3)
+  trend_row <- paste0(trend_row, "  &   ", format_coef(coef_val, digits), stars)
+  trend_se_row <- paste0(trend_se_row, "  & (", format_coef(se_val, digits), ")")
+}
+trend_row <- paste0(trend_row, " \\\\")
+trend_se_row <- paste0(trend_se_row, "  \\\\")
+
+latex_mun_year_trend <- c(latex_mun_year_trend, trend_row, trend_se_row)
+
+# Footer
+latex_mun_year_trend <- c(
+  latex_mun_year_trend,
+  "\\midrule",
+  paste0("Observations        & ",
+         format(results_mun_year_trend[[1]]$n_obs, big.mark = ","), " &",
+         format(results_mun_year_trend[[2]]$n_obs, big.mark = ","), " &",
+         format(results_mun_year_trend[[3]]$n_obs, big.mark = ","), " \\\\"),
+  paste0("$R^2$                &  ",
+         format_coef(results_mun_year_trend[[1]]$r2, 3), " & ",
+         format_coef(results_mun_year_trend[[2]]$r2, 3), " & ",
+         format_coef(results_mun_year_trend[[3]]$r2, 3), " \\\\"),
+  paste0("Adjusted $R^2$       &  ",
+         format_coef(results_mun_year_trend[[1]]$r2_adj, 3), " & ",
+         format_coef(results_mun_year_trend[[2]]$r2_adj, 3), " & ",
+         format_coef(results_mun_year_trend[[3]]$r2_adj, 3), " \\\\"),
+  "Municipality×Year FE &  Yes & Yes & Yes \\\\",
+  "State-Year Trends    &  Yes & Yes & Yes \\\\",
+  "Clustering           &  Municipality & Municipality & Municipality \\\\",
+  "\\bottomrule",
+  "\\end{tabular}",
+  "\\begin{tablenotes}",
+  "\\footnotesize",
+  "\\item \\textit{Note:} Dependent variables are Total Patents (1), Green Patents (2), and Proportion of Green Patents (3). Temperature and precipitation are measured as standard deviations from historical means. All regressions include municipality×year fixed effects and state-specific linear time trends (year×state). Standard errors are clustered at the municipality level and shown in parentheses.",
+  "\\item \\textsuperscript{*} p < 0.10, \\textsuperscript{**} p < 0.05, \\textsuperscript{***} p < 0.01",
+  "\\end{tablenotes}",
+  "\\end{threeparttable}%",
+  "}",
+  "\\end{table}"
+)
+
+# Write table 2
+output_file_mun_year_trend <- "table_patents_municipal_cluster_mun_year_trend.tex"
+writeLines(latex_mun_year_trend, output_file_mun_year_trend)
+cat("Table 2 saved to:", output_file_mun_year_trend, "\n")
+
 # ============================================================================
 # STEP FIVE: PRINT RESULTS SUMMARY
 # ============================================================================
@@ -305,7 +458,20 @@ for(i in 1:3) {
       " (", format_coef(results_state_year[[i]]$se_precip, 4), ")",
       add_stars(results_state_year[[i]]$pval_precip), "\n", sep = "")
   cat("  Observations:       ", results_state_year[[i]]$n_obs, "\n", sep = "")
-  cat("  R²:                 ", format_coef(results_state_year[[i]]$r2, 3), "\n\n", sep = "")
+  cat("  R²:                 ", format_coef(results_state_year[[i]]$r2, 3), "\n", sep = "")
+
+  cat("\n[MUN×YEAR FE + STATE-YEAR TRENDS: Municipality×Year FE + State-Year Trends]\n")
+  cat("  Temperature (β):    ", format_coef(results_mun_year_trend[[i]]$coef_temp, 4),
+      " (", format_coef(results_mun_year_trend[[i]]$se_temp, 4), ")",
+      add_stars(results_mun_year_trend[[i]]$pval_temp), "\n", sep = "")
+  cat("  Precipitation (η):  ", format_coef(results_mun_year_trend[[i]]$coef_precip, 4),
+      " (", format_coef(results_mun_year_trend[[i]]$se_precip, 4), ")",
+      add_stars(results_mun_year_trend[[i]]$pval_precip), "\n", sep = "")
+  cat("  State-Year Trend:   ", format_coef(results_mun_year_trend[[i]]$coef_trend, 4),
+      " (", format_coef(results_mun_year_trend[[i]]$se_trend, 4), ")",
+      add_stars(results_mun_year_trend[[i]]$pval_trend), "\n", sep = "")
+  cat("  Observations:       ", results_mun_year_trend[[i]]$n_obs, "\n", sep = "")
+  cat("  R²:                 ", format_coef(results_mun_year_trend[[i]]$r2, 3), "\n\n", sep = "")
 }
 
 cat(rep("=", 80), "\n", sep = "")
