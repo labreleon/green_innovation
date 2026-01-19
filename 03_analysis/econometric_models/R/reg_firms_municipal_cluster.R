@@ -543,6 +543,22 @@ for(i in 1:length(dep_vars)) {
 
   model_mun_year_trend <- feols(formula_mun_year_trend, data = data, cluster = ~mun_code)
 
+  results_mun_year_trend[[i]] <- list(
+    model = model_mun_year_trend,
+    coef_temp = coef(model_mun_year_trend)["cont_shock_temp"],
+    se_temp = se(model_mun_year_trend)["cont_shock_temp"],
+    pval_temp = pvalue(model_mun_year_trend)["cont_shock_temp"],
+    coef_precip = coef(model_mun_year_trend)["cont_shock_precip"],
+    se_precip = se(model_mun_year_trend)["cont_shock_precip"],
+    pval_precip = pvalue(model_mun_year_trend)["cont_shock_precip"],
+    coef_trend = coef(model_mun_year_trend)["year_state_trend"],
+    se_trend = se(model_mun_year_trend)["year_state_trend"],
+    pval_trend = pvalue(model_mun_year_trend)["year_state_trend"],
+    n_obs = nobs(model_mun_year_trend),
+    r2 = r2(model_mun_year_trend, type = "r2"),
+    r2_adj = r2(model_mun_year_trend, type = "ar2")
+  )
+
   tryCatch({
     data_model_df <- demean_two_way(data_clean_df, "mun_code", "year", vars_to_demean)
     data_model_df <- data_model_df[!is.na(data_model_df[[paste0(dv, "_dm")]]), ]
