@@ -30,7 +30,7 @@ cat("Loading data...\n")
 # - cont_shock_temp: temperature shock (standardized)
 # - cont_shock_precip: precipitation shock (standardized)
 
-data <- read_dta("weather_rais.dta")
+data <- read_dta("./output/final_base/weather_rais.dta")
 
 # Filter for years 2000-2020
 data <- data %>%
@@ -64,14 +64,18 @@ data <- data %>%
 # - cont_shock_temp (temperature anomaly in standard deviations)
 # - cont_shock_precip (precipitation anomaly in standard deviations)
 
-# If variables need to be created/renamed, do it here
-# Example:
-# if(!"total_jobs" %in% names(data)) {
-#   data$total_jobs <- data$total_employment # or however it's named
-# }
-# if(!"green_jobs" %in% names(data)) {
-#   data$green_jobs <- data$green_employment
-# }
+# Rename variables to match expected names
+if("total_vinc" %in% names(data)) {
+  data <- data %>%
+    rename(total_jobs = total_vinc,
+           green_jobs = total_vinc_verde)
+}
+
+# Ensure prop_verde exists
+if(!"prop_verde" %in% names(data) && "total_jobs" %in% names(data) && "green_jobs" %in% names(data)) {
+  data <- data %>%
+    mutate(prop_verde = green_jobs / total_jobs)
+}
 
 # ============================================================================
 # STEP THREE: RUN REGRESSIONS
@@ -121,26 +125,53 @@ for(i in 1:length(dep_vars)) {
 
   # Create year dummies for Conley regression
   year_dummies <- model.matrix(~ factor(year) - 1, data = data_clean)
-  colnames(year_dummies) <- paste0("year_", unique(data_clean$year))
+  colnames(year_dummies) <- paste0("year_", sort(unique(data_clean$year)))
 
-  # Create municipality dummies (this can be computationally intensive)
-  # For large datasets, we'll use the conleyreg package which handles FE internally
+  # Add year dummies to data
+  data_conley <- cbind(data_clean, year_dummies)
 
-  # Formula for Conley (without FE in formula, as conleyreg handles it)
-  formula_conley <- as.formula(paste0(dv, " ~ cont_shock_temp + cont_shock_precip"))
+  # Create municipality dummies (for Conley regression)
+  # Note: With thousands of municipalities, this can be computationally intensive
+  # Alternative: We demean by municipality within-transformation
+  cat("    Demeaning data by municipality fixed effects...\n")
 
-  # Run Conley regression
+  # Demean dependent variable and independent variables by municipality
+  data_conley <- data_conley %>%
+    group_by(mun_code) %>%
+    mutate(
+      !!paste0(dv, "_dm") := !!sym(dv) - mean(!!sym(dv), na.rm = TRUE),
+      temp_dm = cont_shock_temp - mean(cont_shock_temp, na.rm = TRUE),
+      precip_dm = cont_shock_precip - mean(cont_shock_precip, na.rm = TRUE)
+    ) %>%
+    ungroup()
+
+  # Also demean year dummies by municipality
+  year_cols <- grep("^year_", names(data_conley), value = TRUE)
+  for(col in year_cols) {
+    data_conley <- data_conley %>%
+      group_by(mun_code) %>%
+      mutate(!!paste0(col, "_dm") := !!sym(col) - mean(!!sym(col), na.rm = TRUE)) %>%
+      ungroup()
+  }
+
+  year_cols_dm <- paste0(year_cols, "_dm")
+
+  # Formula for Conley with demeaned variables (municipality FE absorbed)
+  # Include demeaned year FEs to account for year fixed effects
+  formula_conley <- as.formula(paste0(
+    dv, "_dm ~ temp_dm + precip_dm + ",
+    paste(year_cols_dm, collapse = " + ")
+  ))
+
+  # Run Conley regression with correct parameters
   tryCatch({
     conley_model <- conleyreg::conleyreg(
       formula = formula_conley,
-      data = data_clean,
-      id = "mun_code",
-      time = "year",
+      data = as.data.frame(data_conley),
       lat = "lat",
       lon = "lon",
       dist_cutoff = 250,    # 250 km spatial correlation
-      lag_cutoff = 7,       # 7-year temporal correlation (Newey-West)
-      fe = "both"           # Both unit (municipal) and time (year) fixed effects
+      lag_cutoff = 7        # 7-year temporal correlation (Newey-West)
     )
 
     # Extract Conley standard errors
@@ -151,24 +182,26 @@ for(i in 1:length(dep_vars)) {
     pval_conley <- conley_summary$coefficients[, "Pr(>|t|)"]
 
     # Store results
-    results_list[[i]] <- list(
+    results_list[[i]] <<- list(
       model = model_fe,
-      coef_temp = coefs_conley["cont_shock_temp"],
-      se_temp = se_conley["cont_shock_temp"],
-      pval_temp = pval_conley["cont_shock_temp"],
-      coef_precip = coefs_conley["cont_shock_precip"],
-      se_precip = se_conley["cont_shock_precip"],
-      pval_precip = pval_conley["cont_shock_precip"],
+      coef_temp = coefs_conley["temp_dm"],
+      se_temp = se_conley["temp_dm"],
+      pval_temp = pval_conley["temp_dm"],
+      coef_precip = coefs_conley["precip_dm"],
+      se_precip = se_conley["precip_dm"],
+      pval_precip = pval_conley["precip_dm"],
       n_obs = nobs(model_fe),
       r2 = r2(model_fe, type = "r2")
     )
+
+    cat("    Conley SEs calculated successfully.\n")
 
   }, error = function(e) {
     warning(paste("Conley SE calculation failed for", dep_labels[i], ":", e$message))
     warning("Using clustered standard errors instead.")
 
     # Fallback to clustered SEs
-    results_list[[i]] <- list(
+    results_list[[i]] <<- list(
       model = model_fe,
       coef_temp = coefs["cont_shock_temp"],
       se_temp = se_basic["cont_shock_temp"],
