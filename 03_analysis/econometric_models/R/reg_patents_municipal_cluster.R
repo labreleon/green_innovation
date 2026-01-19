@@ -147,7 +147,7 @@ for(i in 1:length(dep_vars)) {
 
   cat("\n[3] Mun-Year FE + State-Year Trends: Municipality×Year FE + State×Year Trends + Clustering Municipality\n")
 
-  formula_mun_year_trend <- as.formula(paste0(dv, " ~ cont_shock_temp + cont_shock_precip + year_state_trend | mun_year"))
+  formula_mun_year_trend <- as.formula(paste0(dv, " ~ cont_shock_temp + cont_shock_precip + year_state_trend | mun_code + year"))
 
   model_mun_year_trend <- feols(formula_mun_year_trend, data = data, cluster = ~mun_code)
 
