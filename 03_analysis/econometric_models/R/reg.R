@@ -7,6 +7,7 @@ library(haven)        # For reading Stata files
 library(dplyr)        # For data manipulation
 library(fixest)       # For high-dimensional fixed effects
 library(plm)          # For panel data models
+library(lmtest)       # For coefficient testing (coeftest function)
 library(conleyreg)    # For Conley spatial standard errors
 library(data.table)   # For efficient data manipulation
 
