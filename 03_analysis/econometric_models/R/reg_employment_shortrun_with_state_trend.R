@@ -1,13 +1,8 @@
 # ============================================================================
 # SHORT-RUN PANEL ESTIMATES - EMPLOYMENT OUTCOMES (2000-2020)
 # WITH STATE-YEAR TRENDS
-# EXACT STATA REPLICATION using TWO-WAY demeaning
-#
-# Replicates Stata command:
-# reg2hdfespatial Y X year_state_trend, timevar(year) panelvar(mun_code)
-#                 lat(lat) lon(lon) distcutoff(250) lagcutoff(6)
-#
-# Uses Conley spatial standard errors (250 km, 6-year lag)
+# Replicates Table: Weather shocks and Employment with State-Specific Trends
+# Uses Conley spatial standard errors
 # ============================================================================
 
 # Load required packages
@@ -61,11 +56,10 @@ data[, year_state_trend := year * code_state]
 cat("year_state_trend variable created\n")
 
 # ============================================================================
-# STEP THREE: PRE-COMPUTE TWO-WAY DEMEANED VARIABLES (CORRECT STATA REPLICATION)
+# STEP THREE: PRE-COMPUTE ALL DEMEANED VARIABLES (MAJOR OPTIMIZATION)
 # ============================================================================
 
-cat("Pre-computing TWO-WAY demeaned variables for Conley...\n")
-cat("This replicates the reg2hdfe behavior in Stata (municipality + year FE)\n\n")
+cat("Pre-computing demeaned variables for Conley (this speeds up later steps)...\n")
 
 # Define dependent variables
 dep_vars <- c("total_jobs", "green_jobs", "prop_verde")
@@ -79,59 +73,40 @@ data_clean <- data[!is.na(lat) & !is.na(lon) &
 # Remove rows where ALL dependent variables are missing
 data_clean <- data_clean[!is.na(total_jobs) | !is.na(green_jobs) | !is.na(prop_verde)]
 
-cat("Clean data observations:", nrow(data_clean), "\n\n")
+cat("Clean data observations:", nrow(data_clean), "\n")
 
-# Convert to data.frame for fixest::demean
-data_clean_df <- as.data.frame(data_clean)
+# Create year dummies ONCE (avoid repeating this 3 times)
+years <- sort(unique(data_clean$year))
+n_years <- length(years)
 
-# ============================================================================
-# CRITICAL: IMPLEMENT TWO-WAY DEMEANING (MUNICIPALITY + YEAR)
-# This is what reg2hdfe does in Stata: removes both municipality and year FE
-# ============================================================================
+# Use sparse matrix representation for memory efficiency
+year_dummies <- model.matrix(~ factor(year) - 1, data = data_clean)
+colnames(year_dummies) <- paste0("year_", years)
 
-cat("  Applying two-way demeaning (municipality + year fixed effects)...\n")
+# Add year dummies to data
+data_conley <- cbind(data_clean, year_dummies)
+data_conley <- as.data.table(data_conley)
 
-# List of all variables to demean with two-way FE
-# IMPORTANT: Include year_state_trend
-vars_to_demean <- c(dep_vars, "cont_shock_temp", "cont_shock_precip", "year_state_trend")
+# Demean ALL variables by municipality at once (much faster than doing it 3 times)
+cat("  Demeaning by municipality fixed effects...\n")
 
-# Apply two-way demeaning for each variable
-# fixest::demean removes multiple fixed effects iteratively until convergence
-data_demeaned <- data_clean_df
+# List of all variables to demean
+# IMPORTANT: Include year_state_trend in the list of variables to demean
+vars_to_demean <- c(dep_vars, "cont_shock_temp", "cont_shock_precip",
+                    "year_state_trend",  # <-- ADDED HERE
+                    paste0("year_", years))
 
-for(var in vars_to_demean) {
-  # Skip if variable is all NA
-  if(all(is.na(data_clean_df[[var]]))) {
-    cat("    Skipping", var, "(all NA)\n")
-    next
-  }
+# Demean all variables in one pass using data.table (very fast)
+data_conley[, paste0(vars_to_demean, "_dm") := lapply(.SD, function(x) x - mean(x, na.rm = TRUE)),
+            by = mun_code, .SDcols = vars_to_demean]
 
-  cat("    Demeaning", var, "...\n")
+# Create formula components once
+year_cols_dm <- paste0("year_", years, "_dm")
+# Remove one year dummy to avoid perfect collinearity
+year_cols_dm <- year_cols_dm[-1]  # Drop first year
+formula_years <- paste(year_cols_dm, collapse = " + ")
 
-  # Create formula for two-way demeaning: var ~ 1 | mun_code + year
-  # The demean function removes the fixed effects specified after |
-  demeaned_result <- fixest::demean(
-    as.formula(paste0(var, " ~ 1 | mun_code + year")),
-    data = data_clean_df,
-    na.rm = TRUE
-  )
-
-  # Store demeaned variable
-  data_demeaned[[paste0(var, "_dm")]] <- demeaned_result[[var]]
-}
-
-# Also preserve original lat/lon for distance calculations
-data_demeaned$lat <- data_clean_df$lat
-data_demeaned$lon <- data_clean_df$lon
-data_demeaned$mun_code <- data_clean_df$mun_code
-data_demeaned$year <- data_clean_df$year
-
-# Convert back to data.table
-data_conley <- as.data.table(data_demeaned)
-
-cat("  Two-way demeaning complete.\n")
-cat("  NOTE: year_state_trend has been demeaned by BOTH municipality AND year FE\n")
-cat("  This matches the Stata reg2hdfe behavior exactly.\n\n")
+cat("Pre-computation complete.\n\n")
 
 # ============================================================================
 # STEP FOUR: RUN REGRESSIONS
@@ -169,18 +144,16 @@ for(i in 1:length(dep_vars)) {
   cat("  Calculating Conley spatial standard errors...\n")
 
   # Filter for this specific dependent variable
-  data_model <- data_conley[!is.na(get(paste0(dv, "_dm")))]
+  data_model <- data_conley[!is.na(get(dv))]
 
   cat("    Observations for this model:", nrow(data_model), "\n")
 
-  # Formula for Conley with TWO-WAY demeaned variables
-  # CRITICAL: NO year dummies! They were already removed by two-way demeaning
-  # This matches Stata's reg2hdfe + ols_spatial_HAC behavior exactly
+  # Formula for Conley with demeaned variables (municipality FE absorbed)
+  # IMPORTANT: Include year_state_trend_dm in the formula
   formula_conley <- as.formula(paste0(
-    dv, "_dm ~ cont_shock_temp_dm + cont_shock_precip_dm + year_state_trend_dm - 1"
+    dv, "_dm ~ cont_shock_temp_dm + cont_shock_precip_dm + year_state_trend_dm + ",
+    formula_years
   ))
-
-  cat("    Formula:", deparse(formula_conley), "\n")
 
   # Run Conley regression
   tryCatch({
@@ -193,7 +166,7 @@ for(i in 1:length(dep_vars)) {
       lat = "lat",
       lon = "lon",
       dist_cutoff = 250,    # 250 km spatial correlation
-      lag_cutoff = 6        # 6-year temporal correlation (CHANGED FROM 7 TO MATCH STATA)
+      lag_cutoff = 7        # 7-year temporal correlation (Newey-West)
     )
 
     # Extract Conley standard errors
@@ -377,7 +350,7 @@ latex_lines <- c(
   "\\end{tabular}",
   "\\begin{tablenotes}",
   "\\footnotesize",
-  "\\item \\textit{Note:} The dependent variables are Total Jobs (Column 1), Green jobs (Column 2), and proportion of green jobs (Column 3). Temperature and precipitation are measured as standard deviations from their historical means. The variable $year \\times state$ captures state-specific linear time trends. The municipal-level panel data combine weather variables from Terra Climate and employment records from RAIS. Green jobs are classified using FEBRABAN's Green Taxonomy. All regressions include municipal fixed effects, year fixed effects, and state-specific linear time trends, with standard errors adjusted for spatial dependence (Conley 1999, up to 250 km) and serial correlation (Newey-West 1987, up to 6-year lags). Municipal distances are calculated from centroid coordinates.\\\\",
+  "\\item \\textit{Note:} The dependent variables are Total Jobs (Column 1), Green jobs (Column 2), and proportion of green jobs (Column 3). Temperature and precipitation are measured as standard deviations from their historical means. The variable $year \\times state$ captures state-specific linear time trends. The municipal-level panel data combine weather variables from Terra Climate and employment records from RAIS. Green jobs are classified using FEBRABAN's Green Taxonomy. All regressions include municipal fixed effects, year fixed effects, and state-specific linear time trends, with standard errors adjusted for spatial dependence (Conley 1999, up to 250 km) and serial correlation (Newey-West 1987, up to 7-year lags). Municipal distances are calculated from centroid coordinates.\\\\",
   "\\textsuperscript{*} p < 0.10, \\textsuperscript{**} p < 0.05, \\textsuperscript{***} p < 0.01",
   "\\end{tablenotes}",
   "\\end{threeparttable}%",
@@ -417,55 +390,23 @@ for(i in 1:3) {
 cat("\n", rep("=", 70), "\n", sep = "")
 cat("*** p<0.01, ** p<0.05, * p<0.10\n")
 cat("Standard errors adjusted for spatial dependence (Conley 1999, up to 250 km)\n")
-cat("and serial correlation (Newey-West 1987, up to 6-year lags)\n")
+cat("and serial correlation (Newey-West 1987, up to 7-year lags)\n")
 cat("Model includes: Municipality FE + Year FE + State-Year Trends\n")
-cat("TWO-WAY demeaning used to match Stata reg2hdfespatial exactly\n")
 cat(rep("=", 70), "\n\n", sep = "")
 
 # ============================================================================
-# IMPORTANT NOTES: EXACT STATA REPLICATION
+# IMPORTANT NOTES ON CONLEY SE WITH STATE-YEAR TRENDS
 # ============================================================================
 #
-# This script NOW CORRECTLY replicates Stata's reg2hdfespatial behavior:
+# Key points:
+# 1. year_state_trend is created as year * code_state
+# 2. This variable is demeaned by municipality (along with all other variables)
+# 3. The demeaned version (year_state_trend_dm) is included in the Conley formula
+# 4. This correctly accounts for state-specific linear time trends while computing
+#    spatial and temporal correlation in the errors
 #
-# CRITICAL CHANGES FOR STATA REPLICATION:
-# ----------------------------------------
-# 1. TWO-WAY DEMEANING: Uses fixest::demean() to remove BOTH municipality AND year
-#    fixed effects simultaneously (not just municipality FE + year dummies!)
-#    - This matches reg2hdfe behavior in Stata exactly
-#    - All variables (Y, X, year_state_trend) are demeaned with two-way FE
+# The demeaning absorbs municipality fixed effects, and including year_state_trend_dm
+# captures state-specific trends that vary linearly with time.
 #
-# 2. NO YEAR DUMMIES in Conley model: Year fixed effects are already removed by
-#    two-way demeaning, so we DON'T include year dummies in the Conley formula
-#    - Stata runs: ols_spatial_HAC Y X (on demeaned data, no year dummies)
-#    - R now runs: conleyreg(Y_dm ~ X_dm - 1) (same approach)
-#
-# 3. lag_cutoff = 6: Changed from 7 to match Stata exactly
-#    - Stata uses lagcutoff(6) in most short-run models
-#    - This affects Newey-West temporal correlation correction
-#
-# 4. year_state_trend treatment:
-#    - Created as: year * code_state
-#    - Demeaned with TWO-WAY FE (municipality + year)
-#    - Included in Conley model as year_state_trend_dm
-#    - This captures state-specific linear time trends correctly
-#
-# WHY TWO-WAY DEMEANING MATTERS:
-# -------------------------------
-# - One-way demeaning (by municipality only) + year dummies ≠ Two-way demeaning!
-# - Two-way FE removes:
-#   (a) Mean of each municipality across all years
-#   (b) Mean of each year across all municipalities
-#   (c) Uses iterative algorithm until convergence
-# - This affects ALL coefficients and standard errors
-#
-# STATA COMMAND BEING REPLICATED:
-# --------------------------------
-# reg2hdfespatial Y X year_state_trend, timevar(year) panelvar(mun_code)
-#                 lat(lat) lon(lon) distcutoff(250) lagcutoff(6)
-#
-# Where reg2hdfespatial internally:
-# 1. Calls reg2hdfe to do two-way demeaning
-# 2. Calls ols_spatial_HAC on demeaned data
-#
+# This is the correct specification for Conley SE with state-year trends.
 # ============================================================================
