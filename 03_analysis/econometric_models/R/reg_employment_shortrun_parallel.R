@@ -1,7 +1,7 @@
 # ============================================================================
 # SHORT-RUN PANEL ESTIMATES - EMPLOYMENT OUTCOMES (2000-2020)
 # Replicates Table: Weather shocks and Employment: Short-Run Panel Regressions
-# OPTIMIZED VERSION - Significantly faster Conley computation
+# PARALLEL VERSION - Runs 3 models simultaneously for maximum speed
 # ============================================================================
 
 # Load required packages
@@ -13,6 +13,11 @@ library(sandwich)     # For robust standard errors
 library(lmtest)       # For coefficient testing
 library(data.table)   # For efficient data manipulation
 library(stargazer)    # For LaTeX table generation
+library(parallel)     # For parallel processing
+
+# Detect number of cores (use all but one to keep system responsive)
+n_cores <- max(1, detectCores() - 1)
+cat("Using", n_cores, "cores for parallel processing\n\n")
 
 # ============================================================================
 # STEP ONE: LOAD AND PREPARE DATA
@@ -99,19 +104,16 @@ formula_years <- paste(year_cols_dm, collapse = " + ")
 cat("Pre-computation complete.\n\n")
 
 # ============================================================================
-# STEP FOUR: RUN REGRESSIONS
+# STEP FOUR: RUN REGRESSIONS IN PARALLEL
 # ============================================================================
 
-cat("Running regressions...\n\n")
+cat("Running regressions in parallel...\n\n")
 
-# Initialize results storage
-results_list <- list()
-
-# Loop through each dependent variable
-for(i in 1:length(dep_vars)) {
+# Function to run one model
+run_model <- function(i, dep_vars, dep_labels, data, data_conley, formula_years) {
 
   dv <- dep_vars[i]
-  cat("Model", i, "-", dep_labels[i], "\n")
+  cat("  [Core", i, "] Model", i, "-", dep_labels[i], "\n")
 
   # -------------------------------------------------------------------------
   # Model with municipal and year fixed effects (using original data)
@@ -119,7 +121,7 @@ for(i in 1:length(dep_vars)) {
 
   formula_fe <- as.formula(paste0(dv, " ~ cont_shock_temp + cont_shock_precip | mun_code + year"))
 
-  # Run fixed effects regression using fixest on original data (not data_conley)
+  # Run fixed effects regression using fixest on original data
   model_fe <- feols(formula_fe, data = data, cluster = ~mun_code)
 
   # Extract basic results
@@ -130,12 +132,12 @@ for(i in 1:length(dep_vars)) {
   # Calculate Conley Spatial HAC Standard Errors
   # -------------------------------------------------------------------------
 
-  cat("  Calculating Conley spatial standard errors...\n")
+  cat("  [Core", i, "] Calculating Conley spatial standard errors...\n")
 
   # Filter for this specific dependent variable
   data_model <- data_conley[!is.na(get(dv))]
 
-  cat("    Observations for this model:", nrow(data_model), "\n")
+  cat("  [Core", i, "] Observations for this model:", nrow(data_model), "\n")
 
   # Formula for Conley with demeaned variables (municipality FE absorbed)
   formula_conley <- as.formula(paste0(
@@ -144,8 +146,8 @@ for(i in 1:length(dep_vars)) {
   ))
 
   # Run Conley regression
-  tryCatch({
-    # Convert to data.frame for conleyreg (it doesn't work well with data.table)
+  result <- tryCatch({
+    # Convert to data.frame for conleyreg
     data_model_df <- as.data.frame(data_model)
 
     conley_model <- conleyreg::conleyreg(
@@ -161,11 +163,10 @@ for(i in 1:length(dep_vars)) {
     conley_summary <- summary(conley_model)
     se_conley <- conley_summary$coefficients[, "Std. Error"]
     coefs_conley <- conley_summary$coefficients[, "Estimate"]
-    tstat_conley <- conley_summary$coefficients[, "t value"]
     pval_conley <- conley_summary$coefficients[, "Pr(>|t|)"]
 
-    # Store results
-    results_list[[i]] <- list(
+    # Return results
+    list(
       model = model_fe,
       coef_temp = coefs_conley["cont_shock_temp_dm"],
       se_temp = se_conley["cont_shock_temp_dm"],
@@ -174,17 +175,16 @@ for(i in 1:length(dep_vars)) {
       se_precip = se_conley["cont_shock_precip_dm"],
       pval_precip = pval_conley["cont_shock_precip_dm"],
       n_obs = nobs(model_fe),
-      r2 = r2(model_fe, type = "r2")
+      r2 = r2(model_fe, type = "r2"),
+      success = TRUE
     )
 
-    cat("    Conley SEs calculated successfully.\n")
-
   }, error = function(e) {
-    warning(paste("Conley SE calculation failed for", dep_labels[i], ":", e$message))
-    warning("Using clustered standard errors instead.")
+    warning(paste("  [Core", i, "] Conley SE calculation failed for", dep_labels[i], ":", e$message))
+    warning(paste("  [Core", i, "] Using clustered standard errors instead."))
 
     # Fallback to clustered SEs
-    results_list[[i]] <<- list(
+    list(
       model = model_fe,
       coef_temp = coefs["cont_shock_temp"],
       se_temp = se_basic["cont_shock_temp"],
@@ -193,12 +193,46 @@ for(i in 1:length(dep_vars)) {
       se_precip = se_basic["cont_shock_precip"],
       pval_precip = summary(model_fe)$coeftable["cont_shock_precip", "Pr(>|t|)"],
       n_obs = nobs(model_fe),
-      r2 = r2(model_fe, type = "r2")
+      r2 = r2(model_fe, type = "r2"),
+      success = FALSE
     )
   })
 
-  cat("  Model", i, "completed.\n\n")
+  cat("  [Core", i, "] Model", i, "completed.\n")
+  return(result)
 }
+
+# Run models in parallel using mclapply (Unix/Mac) or parLapply (Windows)
+if (.Platform$OS.type == "unix") {
+  # Use mclapply for Unix/Mac (more efficient)
+  results_list <- mclapply(1:3, function(i) {
+    run_model(i, dep_vars, dep_labels, data, data_conley, formula_years)
+  }, mc.cores = min(3, n_cores))
+} else {
+  # Use parLapply for Windows
+  cl <- makeCluster(min(3, n_cores))
+
+  # Export necessary objects to cluster
+  clusterExport(cl, c("dep_vars", "dep_labels", "data", "data_conley",
+                      "formula_years", "run_model"))
+
+  # Load necessary packages on each worker
+  clusterEvalQ(cl, {
+    library(fixest)
+    library(conleyreg)
+    library(data.table)
+  })
+
+  # Run models in parallel
+  results_list <- parLapply(cl, 1:3, function(i) {
+    run_model(i, dep_vars, dep_labels, data, data_conley, formula_years)
+  })
+
+  # Stop cluster
+  stopCluster(cl)
+}
+
+cat("\nAll models completed.\n\n")
 
 # ============================================================================
 # STEP FIVE: GENERATE LATEX TABLE
@@ -335,6 +369,7 @@ for(i in 1:3) {
       add_stars(results_list[[i]]$pval_precip), "\n", sep = "")
   cat("  Observations:       ", results_list[[i]]$n_obs, "\n", sep = "")
   cat("  R²:                 ", format_coef(results_list[[i]]$r2, 3), "\n", sep = "")
+  cat("  Conley success:     ", results_list[[i]]$success, "\n", sep = "")
 }
 
 cat("\n", rep("=", 70), "\n", sep = "")
@@ -342,23 +377,3 @@ cat("*** p<0.01, ** p<0.05, * p<0.10\n")
 cat("Standard errors adjusted for spatial dependence (Conley 1999, up to 250 km)\n")
 cat("and serial correlation (Newey-West 1987, up to 7-year lags)\n")
 cat(rep("=", 70), "\n\n", sep = "")
-
-# ============================================================================
-# PERFORMANCE NOTES
-# ============================================================================
-#
-# Key optimizations made:
-# 1. Convert to data.table early for faster operations
-# 2. Pre-compute all demeaned variables ONCE instead of 3 times
-# 3. Create year dummies ONCE and reuse for all 3 models
-# 4. Use data.table's efficient by-group operations for demeaning
-# 5. Filter missing values once, not repeatedly
-# 6. Remove one year dummy to avoid perfect collinearity
-#
-# Further optimization options if still too slow:
-# 1. Reduce dist_cutoff (e.g., from 250 to 150 km) - tests spatial correlation range
-# 2. Reduce lag_cutoff (e.g., from 7 to 5 years) - tests temporal correlation range
-# 3. Use parallel processing for the 3 models (requires 'parallel' package)
-# 4. Sample municipalities if exploratory analysis (use set.seed for reproducibility)
-#
-# ============================================================================
