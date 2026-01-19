@@ -166,7 +166,7 @@ for(i in 1:length(dep_vars)) {
   # Formula: Y_mt = β*T_mt + η*P_mt + year_state_trend + α_mt + ε_mt
   # where α_mt = municipality-year fixed effects
   # and year_state_trend = year * code_state (state-specific linear trends)
-  formula_mun_year_trend <- as.formula(paste0(dv, " ~ cont_shock_temp + cont_shock_precip + year_state_trend | mun_year"))
+  formula_mun_year_trend <- as.formula(paste0(dv, " ~ cont_shock_temp + cont_shock_precip + year_state_trend | mun_code + year"))
 
   # Run fixed effects regression with municipal clustering
   model_mun_year_trend <- feols(formula_mun_year_trend, data = data, cluster = ~mun_code)
