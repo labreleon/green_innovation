@@ -7,7 +7,7 @@ library(haven)        # For reading Stata files
 library(dplyr)        # For data manipulation
 library(fixest)       # For high-dimensional fixed effects
 library(plm)          # For panel data models
-library(ConleySEs)    # For Conley spatial standard errors
+library(conleyreg)    # For Conley spatial standard errors
 library(data.table)   # For efficient data manipulation
 
 # Load data
@@ -134,7 +134,7 @@ for (comb in combinations) {
   }
 
   # Run Conley spatial HAC regression
-  # Note: reg2hdfespatial is a Stata command. In R, we can use ConleySEs package
+  # Note: reg2hdfespatial is a Stata command. In R, we can use conleyreg package
   # or implement Conley standard errors manually
 
   year_dummy_cols <- grep("^year_dummy", names(data), value = TRUE)
@@ -153,27 +153,27 @@ for (comb in combinations) {
   model_ols <- lm(formula_conley, data = data_conley)
 
   # Calculate Conley SEs
-  # ConleySEs function requires: model, coordinates (lat, lon), distance cutoff, and time lags
-  # Note: This requires the ConleySEs package or a custom implementation
+  # conleyreg function requires: formula, data, coordinates (lat, lon), distance cutoff, and time lags
+  # Note: This requires the conleyreg package
   tryCatch({
-    conley_se <- ConleySEs::ConleySEs(
-      reg = model_ols,
-      unit = data_conley$panelvar,
-      time = data_conley$timevar,
-      lat = data_conley$lat,
-      lon = data_conley$lon,
-      dist_fn = "SH",  # Spherical distance
+    conley_model <- conleyreg::conleyreg(
+      formula = formula_conley,
+      data = data_conley,
+      id = "panelvar",
+      time = "timevar",
+      lat = "lat",
+      lon = "lon",
       dist_cutoff = 250,  # 250 km
-      lag_cutoff = 6,
-      cores = 1,
-      verbose = FALSE
+      lag_cutoff = 6
     )
+
+    conley_se <- summary(conley_model)$coefficients
 
     # Store Conley results
     for (var in ivars) {
-      b_co <- coef(model_ols)[var]
+      b_co <- conley_se[var, "Estimate"]
       se_co <- conley_se[var, "Std. Error"]
-      t_co <- b_co / se_co
+      t_co <- conley_se[var, "t value"]
 
       p1_co <- ifelse(abs(t_co) > qnorm(0.95), "*", "")
       p2_co <- ifelse(abs(t_co) > qnorm(0.975), "*", "")
