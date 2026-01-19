@@ -344,6 +344,43 @@ for(i in 1:length(dep_vars)) {
     results_basic_hac[[i]] <<- NULL
   })
 
+  tryCatch({
+    data_model_df <- demean_two_way(data_clean_df, "mun_code", "year", vars_to_demean)
+    data_model_df <- data_model_df[!is.na(data_model_df[[paste0(dv, "_dm")]]), ]
+
+    hac_results <- compute_spatial_hac_vcov(
+      data = data_model_df,
+      y_var = paste0(dv, "_dm"),
+      x_vars = c("cont_shock_temp_dm", "cont_shock_precip_dm"),
+      lat_var = "lat",
+      lon_var = "lon",
+      time_var = "year",
+      panel_var = "mun_code",
+      dist_cutoff = 250,
+      lag_cutoff = 6,
+      bartlett = TRUE
+    )
+
+    coefs_hac <- hac_results$coefficients
+    se_spatial_hac <- sqrt(diag(hac_results$vcov_spatial_hac))
+    tstat_hac <- coefs_hac / se_spatial_hac
+    pval_hac <- 2 * pt(abs(tstat_hac),
+                       df = nrow(data_model_df) - length(coefs_hac),
+                       lower.tail = FALSE)
+
+    results_basic_hac[[i]] <- list(
+      coef_temp = coefs_hac["cont_shock_temp_dm"],
+      se_temp = se_spatial_hac["cont_shock_temp_dm"],
+      pval_temp = pval_hac["cont_shock_temp_dm"],
+      coef_precip = coefs_hac["cont_shock_precip_dm"],
+      se_precip = se_spatial_hac["cont_shock_precip_dm"],
+      pval_precip = pval_hac["cont_shock_precip_dm"]
+    )
+  }, error = function(e) {
+    warning(paste("Spatial + serial HAC (baseline) failed for", dep_labels[i], ":", e$message))
+    results_basic_hac[[i]] <<- NULL
+  })
+
   cat("  Temperature coef:   ", sprintf("%.4f", results_basic[[i]]$coef_temp), "\n")
   cat("  Temperature SE:     ", sprintf("%.4f", results_basic[[i]]$se_temp), "\n")
   cat("  Temperature p-value:", sprintf("%.4f", results_basic[[i]]$pval_temp), "\n")
@@ -375,6 +412,43 @@ for(i in 1:length(dep_vars)) {
     r2 = r2(model_state_year, type = "r2"),
     r2_adj = r2(model_state_year, type = "ar2")
   )
+
+  tryCatch({
+    data_model_df <- demean_two_way(data_clean_df, "mun_code", "state_year", vars_to_demean)
+    data_model_df <- data_model_df[!is.na(data_model_df[[paste0(dv, "_dm")]]), ]
+
+    hac_results <- compute_spatial_hac_vcov(
+      data = data_model_df,
+      y_var = paste0(dv, "_dm"),
+      x_vars = c("cont_shock_temp_dm", "cont_shock_precip_dm"),
+      lat_var = "lat",
+      lon_var = "lon",
+      time_var = "year",
+      panel_var = "mun_code",
+      dist_cutoff = 250,
+      lag_cutoff = 6,
+      bartlett = TRUE
+    )
+
+    coefs_hac <- hac_results$coefficients
+    se_spatial_hac <- sqrt(diag(hac_results$vcov_spatial_hac))
+    tstat_hac <- coefs_hac / se_spatial_hac
+    pval_hac <- 2 * pt(abs(tstat_hac),
+                       df = nrow(data_model_df) - length(coefs_hac),
+                       lower.tail = FALSE)
+
+    results_state_year_hac[[i]] <- list(
+      coef_temp = coefs_hac["cont_shock_temp_dm"],
+      se_temp = se_spatial_hac["cont_shock_temp_dm"],
+      pval_temp = pval_hac["cont_shock_temp_dm"],
+      coef_precip = coefs_hac["cont_shock_precip_dm"],
+      se_precip = se_spatial_hac["cont_shock_precip_dm"],
+      pval_precip = pval_hac["cont_shock_precip_dm"]
+    )
+  }, error = function(e) {
+    warning(paste("Spatial + serial HAC (state-year FE) failed for", dep_labels[i], ":", e$message))
+    results_state_year_hac[[i]] <<- NULL
+  })
 
   tryCatch({
     data_model_df <- demean_two_way(data_clean_df, "mun_code", "state_year", vars_to_demean)
@@ -900,6 +974,112 @@ writeLines(latex_comparison_hac, output_file_hac)
 cat("LaTeX HAC table saved to:", output_file_hac, "\n")
 
 # -------------------------------------------------------------------------
+# TABLE 1B: Comparison Table (HAC Standard Errors)
+# -------------------------------------------------------------------------
+
+latex_comparison_hac <- c(
+  "\\begin{table}[H]",
+  "\\centering",
+  "\\resizebox{\\textwidth}{!}{%",
+  "\\begin{threeparttable}",
+  "\\caption{Weather Shocks and Patents: Spatial + Serial HAC}",
+  "\\label{tab:patents_comparison_hac}",
+  "\\begin{tabular}{lcccccc}",
+  "\\toprule",
+  "\\multicolumn{7}{c}{\\textbf{Weather Shocks and Patents (2000-2020)}}\\\\",
+  "\\midrule",
+  " & \\multicolumn{3}{c}{\\textbf{Year FE}} & \\multicolumn{3}{c}{\\textbf{State×Year FE}} \\\\",
+  "\\cmidrule(lr){2-4} \\cmidrule(lr){5-7}",
+  "Dependent Variable:",
+  paste0("  & (1) ", dep_labels[1]),
+  paste0("  & (2) ", dep_labels[2]),
+  paste0("  & (3) ", dep_labels[3]),
+  paste0("  & (4) ", dep_labels[1]),
+  paste0("  & (5) ", dep_labels[2]),
+  paste0("  & (6) ", dep_labels[3], " \\\\"),
+  "\\midrule"
+)
+
+temp_row <- "$T_{mt}$"
+temp_se_row <- ""
+for(i in 1:3) {
+  coef_val <- extract_or_na(results_basic_hac, i, "coef_temp")
+  se_val <- extract_or_na(results_basic_hac, i, "se_temp")
+  pval <- extract_or_na(results_basic_hac, i, "pval_temp")
+  stars <- add_stars(pval)
+  digits <- ifelse(is.na(coef_val), 3, ifelse(abs(coef_val) < 0.01, 4, 3))
+  temp_row <- paste0(temp_row, "  &   ", format_coef(coef_val, digits), stars)
+  temp_se_row <- paste0(temp_se_row, "  & (", format_coef(se_val, digits), ")")
+}
+for(i in 1:3) {
+  coef_val <- extract_or_na(results_state_year_hac, i, "coef_temp")
+  se_val <- extract_or_na(results_state_year_hac, i, "se_temp")
+  pval <- extract_or_na(results_state_year_hac, i, "pval_temp")
+  stars <- add_stars(pval)
+  digits <- ifelse(is.na(coef_val), 3, ifelse(abs(coef_val) < 0.01, 4, 3))
+  temp_row <- paste0(temp_row, "  &   ", format_coef(coef_val, digits), stars)
+  temp_se_row <- paste0(temp_se_row, "  & (", format_coef(se_val, digits), ")")
+}
+temp_row <- paste0(temp_row, " \\\\")
+temp_se_row <- paste0(temp_se_row, "  \\\\[0.5em]")
+
+latex_comparison_hac <- c(latex_comparison_hac, temp_row, temp_se_row)
+
+precip_row <- "$P_{mt}$"
+precip_se_row <- ""
+for(i in 1:3) {
+  coef_val <- extract_or_na(results_basic_hac, i, "coef_precip")
+  se_val <- extract_or_na(results_basic_hac, i, "se_precip")
+  pval <- extract_or_na(results_basic_hac, i, "pval_precip")
+  stars <- add_stars(pval)
+  digits <- ifelse(is.na(coef_val), 3, ifelse(abs(coef_val) < 0.01, 4, 3))
+  precip_row <- paste0(precip_row, "  &   ", format_coef(coef_val, digits), stars)
+  precip_se_row <- paste0(precip_se_row, "  & (", format_coef(se_val, digits), ")")
+}
+for(i in 1:3) {
+  coef_val <- extract_or_na(results_state_year_hac, i, "coef_precip")
+  se_val <- extract_or_na(results_state_year_hac, i, "se_precip")
+  pval <- extract_or_na(results_state_year_hac, i, "pval_precip")
+  stars <- add_stars(pval)
+  digits <- ifelse(is.na(coef_val), 3, ifelse(abs(coef_val) < 0.01, 4, 3))
+  precip_row <- paste0(precip_row, "  &   ", format_coef(coef_val, digits), stars)
+  precip_se_row <- paste0(precip_se_row, "  & (", format_coef(se_val, digits), ")")
+}
+precip_row <- paste0(precip_row, " \\\\")
+precip_se_row <- paste0(precip_se_row, "  \\\\")
+
+latex_comparison_hac <- c(latex_comparison_hac, precip_row, precip_se_row)
+
+latex_comparison_hac <- c(
+  latex_comparison_hac,
+  "\\midrule",
+  paste0("Observations & ",
+         format(results_basic[[1]]$n_obs, big.mark = ","), " &",
+         format(results_basic[[2]]$n_obs, big.mark = ","), " &",
+         format(results_basic[[3]]$n_obs, big.mark = ","), " &",
+         format(results_state_year[[1]]$n_obs, big.mark = ","), " &",
+         format(results_state_year[[2]]$n_obs, big.mark = ","), " &",
+         format(results_state_year[[3]]$n_obs, big.mark = ","), " \\\\"),
+  "Municipality FE & Yes & Yes & Yes & Yes & Yes & Yes \\\\",
+  "Year FE         & Yes & Yes & Yes & No  & No  & No  \\\\",
+  "State×Year FE   & No  & No  & No  & Yes & Yes & Yes \\\\",
+  "\\bottomrule",
+  "\\end{tabular}",
+  "\\begin{tablenotes}",
+  "\\footnotesize",
+  "\\item \\textit{Note:} Standard errors are spatial (Conley 1999, 250 km) and serial (Newey-West 1987, 6-year lags) HAC.",
+  "\\item \\textsuperscript{*} p < 0.10, \\textsuperscript{**} p < 0.05, \\textsuperscript{***} p < 0.01",
+  "\\end{tablenotes}",
+  "\\end{threeparttable}%",
+  "}",
+  "\\end{table}"
+)
+
+output_file_hac <- "table_patents_municipal_cluster_comparison_hac.tex"
+writeLines(latex_comparison_hac, output_file_hac)
+cat("LaTeX HAC table saved to:", output_file_hac, "\n")
+
+# -------------------------------------------------------------------------
 # TABLE 2: Municipality-Year Fixed Effects + State-Year Trends
 # -------------------------------------------------------------------------
 
@@ -925,9 +1105,9 @@ latex_mun_year_trend <- c(
 temp_row <- "$T_{mt}$ (Temperature)"
 temp_se_row <- ""
 for(i in 1:3) {
-  coef_val <- results_mun_year_trend[[i]]$coef_temp
-  se_val <- results_mun_year_trend[[i]]$se_temp
-  pval <- results_mun_year_trend[[i]]$pval_temp
+  coef_val <- extract_or_na(results_mun_year_trend, i, "coef_temp")
+  se_val <- extract_or_na(results_mun_year_trend, i, "se_temp")
+  pval <- extract_or_na(results_mun_year_trend, i, "pval_temp")
   stars <- add_stars(pval)
   digits <- ifelse(abs(coef_val) < 0.01, 4, 3)
   temp_row <- paste0(temp_row, "  &   ", format_coef(coef_val, digits), stars)
@@ -942,9 +1122,9 @@ latex_mun_year_trend <- c(latex_mun_year_trend, temp_row, temp_se_row)
 precip_row <- "$P_{mt}$ (Precipitation)"
 precip_se_row <- ""
 for(i in 1:3) {
-  coef_val <- results_mun_year_trend[[i]]$coef_precip
-  se_val <- results_mun_year_trend[[i]]$se_precip
-  pval <- results_mun_year_trend[[i]]$pval_precip
+  coef_val <- extract_or_na(results_mun_year_trend, i, "coef_precip")
+  se_val <- extract_or_na(results_mun_year_trend, i, "se_precip")
+  pval <- extract_or_na(results_mun_year_trend, i, "pval_precip")
   stars <- add_stars(pval)
   digits <- ifelse(abs(coef_val) < 0.01, 4, 3)
   precip_row <- paste0(precip_row, "  &   ", format_coef(coef_val, digits), stars)
@@ -959,9 +1139,9 @@ latex_mun_year_trend <- c(latex_mun_year_trend, precip_row, precip_se_row)
 trend_row <- "$year \\times state$ (State-Year Trend)"
 trend_se_row <- ""
 for(i in 1:3) {
-  coef_val <- results_mun_year_trend[[i]]$coef_trend
-  se_val <- results_mun_year_trend[[i]]$se_trend
-  pval <- results_mun_year_trend[[i]]$pval_trend
+  coef_val <- extract_or_na(results_mun_year_trend, i, "coef_trend")
+  se_val <- extract_or_na(results_mun_year_trend, i, "se_trend")
+  pval <- extract_or_na(results_mun_year_trend, i, "pval_trend")
   stars <- add_stars(pval)
   digits <- ifelse(abs(coef_val) < 0.01, 4, 3)
   trend_row <- paste0(trend_row, "  &   ", format_coef(coef_val, digits), stars)
@@ -977,17 +1157,17 @@ latex_mun_year_trend <- c(
   latex_mun_year_trend,
   "\\midrule",
   paste0("Observations        & ",
-         format(results_mun_year_trend[[1]]$n_obs, big.mark = ","), " &",
-         format(results_mun_year_trend[[2]]$n_obs, big.mark = ","), " &",
-         format(results_mun_year_trend[[3]]$n_obs, big.mark = ","), " \\\\"),
+         format(extract_or_na(results_mun_year_trend, 1, "n_obs"), big.mark = ","), " &",
+         format(extract_or_na(results_mun_year_trend, 2, "n_obs"), big.mark = ","), " &",
+         format(extract_or_na(results_mun_year_trend, 3, "n_obs"), big.mark = ","), " \\\\"),
   paste0("$R^2$                &  ",
-         format_coef(results_mun_year_trend[[1]]$r2, 3), " & ",
-         format_coef(results_mun_year_trend[[2]]$r2, 3), " & ",
-         format_coef(results_mun_year_trend[[3]]$r2, 3), " \\\\"),
+         format_coef(extract_or_na(results_mun_year_trend, 1, "r2"), 3), " & ",
+         format_coef(extract_or_na(results_mun_year_trend, 2, "r2"), 3), " & ",
+         format_coef(extract_or_na(results_mun_year_trend, 3, "r2"), 3), " \\\\"),
   paste0("Adjusted $R^2$       &  ",
-         format_coef(results_mun_year_trend[[1]]$r2_adj, 3), " & ",
-         format_coef(results_mun_year_trend[[2]]$r2_adj, 3), " & ",
-         format_coef(results_mun_year_trend[[3]]$r2_adj, 3), " \\\\"),
+         format_coef(extract_or_na(results_mun_year_trend, 1, "r2_adj"), 3), " & ",
+         format_coef(extract_or_na(results_mun_year_trend, 2, "r2_adj"), 3), " & ",
+         format_coef(extract_or_na(results_mun_year_trend, 3, "r2_adj"), 3), " \\\\"),
   "Municipality×Year FE &  Yes & Yes & Yes \\\\",
   "State-Year Trends    &  Yes & Yes & Yes \\\\",
   "Clustering           &  Municipality & Municipality & Municipality \\\\",
@@ -1007,6 +1187,101 @@ latex_mun_year_trend <- c(
 output_file_mun_year_trend <- "table_patents_municipal_cluster_mun_year_trend.tex"
 writeLines(latex_mun_year_trend, output_file_mun_year_trend)
 cat("Table 2 saved to:", output_file_mun_year_trend, "\n")
+
+# -------------------------------------------------------------------------
+# TABLE 2B: Municipality-Year FE + State-Year Trends (HAC Standard Errors)
+# -------------------------------------------------------------------------
+
+latex_mun_year_trend_hac <- c(
+  "\\begin{table}[H]",
+  "\\centering",
+  "\\resizebox{0.75\\textwidth}{!}{%",
+  "\\begin{threeparttable}",
+  "\\caption{Municipality-Year Fixed Effects with State-Year Trends - Patents (HAC)}",
+  "\\label{tab:patents_mun_year_trend_hac}",
+  "\\begin{tabular}{lccc}",
+  "\\toprule",
+  "\\multicolumn{4}{c}{\\textbf{Weather Shocks and Patents - Municipality×Year FE + State Trends}}\\\\",
+  "\\midrule",
+  "Dependent Variable:",
+  paste0("  & (1) ", dep_labels[1]),
+  paste0("  & (2) ", dep_labels[2]),
+  paste0("  & (3) ", dep_labels[3], " \\\\"),
+  "\\midrule"
+)
+
+temp_row <- "$T_{mt}$ (Temperature)"
+temp_se_row <- ""
+for(i in 1:3) {
+  coef_val <- extract_or_na(results_mun_year_trend_hac, i, "coef_temp")
+  se_val <- extract_or_na(results_mun_year_trend_hac, i, "se_temp")
+  pval <- extract_or_na(results_mun_year_trend_hac, i, "pval_temp")
+  stars <- add_stars(pval)
+  digits <- ifelse(is.na(coef_val), 3, ifelse(abs(coef_val) < 0.01, 4, 3))
+  temp_row <- paste0(temp_row, "  &   ", format_coef(coef_val, digits), stars)
+  temp_se_row <- paste0(temp_se_row, "  & (", format_coef(se_val, digits), ")")
+}
+temp_row <- paste0(temp_row, " \\\\")
+temp_se_row <- paste0(temp_se_row, "  \\\\[0.5em]")
+
+latex_mun_year_trend_hac <- c(latex_mun_year_trend_hac, temp_row, temp_se_row)
+
+precip_row <- "$P_{mt}$ (Precipitation)"
+precip_se_row <- ""
+for(i in 1:3) {
+  coef_val <- extract_or_na(results_mun_year_trend_hac, i, "coef_precip")
+  se_val <- extract_or_na(results_mun_year_trend_hac, i, "se_precip")
+  pval <- extract_or_na(results_mun_year_trend_hac, i, "pval_precip")
+  stars <- add_stars(pval)
+  digits <- ifelse(is.na(coef_val), 3, ifelse(abs(coef_val) < 0.01, 4, 3))
+  precip_row <- paste0(precip_row, "  &   ", format_coef(coef_val, digits), stars)
+  precip_se_row <- paste0(precip_se_row, "  & (", format_coef(se_val, digits), ")")
+}
+precip_row <- paste0(precip_row, " \\\\")
+precip_se_row <- paste0(precip_se_row, "  \\\\[0.5em]")
+
+latex_mun_year_trend_hac <- c(latex_mun_year_trend_hac, precip_row, precip_se_row)
+
+trend_row <- "$year \\times state$ (State-Year Trend)"
+trend_se_row <- ""
+for(i in 1:3) {
+  coef_val <- extract_or_na(results_mun_year_trend_hac, i, "coef_trend")
+  se_val <- extract_or_na(results_mun_year_trend_hac, i, "se_trend")
+  pval <- extract_or_na(results_mun_year_trend_hac, i, "pval_trend")
+  stars <- add_stars(pval)
+  digits <- ifelse(is.na(coef_val), 3, ifelse(abs(coef_val) < 0.01, 4, 3))
+  trend_row <- paste0(trend_row, "  &   ", format_coef(coef_val, digits), stars)
+  trend_se_row <- paste0(trend_se_row, "  & (", format_coef(se_val, digits), ")")
+}
+trend_row <- paste0(trend_row, " \\\\")
+trend_se_row <- paste0(trend_se_row, "  \\\\")
+
+latex_mun_year_trend_hac <- c(latex_mun_year_trend_hac, trend_row, trend_se_row)
+
+latex_mun_year_trend_hac <- c(
+  latex_mun_year_trend_hac,
+  "\\midrule",
+  paste0("Observations        & ",
+         format(extract_or_na(results_mun_year_trend, 1, "n_obs"), big.mark = ","), " &",
+         format(extract_or_na(results_mun_year_trend, 2, "n_obs"), big.mark = ","), " &",
+         format(extract_or_na(results_mun_year_trend, 3, "n_obs"), big.mark = ","), " \\\\"),
+  "Municipality×Year FE &  Yes & Yes & Yes \\\\",
+  "State-Year Trends    &  Yes & Yes & Yes \\\\",
+  "\\bottomrule",
+  "\\end{tabular}",
+  "\\begin{tablenotes}",
+  "\\footnotesize",
+  "\\item \\textit{Note:} Standard errors are spatial (Conley 1999, 250 km) and serial (Newey-West 1987, 6-year lags) HAC.",
+  "\\item \\textsuperscript{*} p < 0.10, \\textsuperscript{**} p < 0.05, \\textsuperscript{***} p < 0.01",
+  "\\end{tablenotes}",
+  "\\end{threeparttable}%",
+  "}",
+  "\\end{table}"
+)
+
+output_file_mun_year_trend_hac <- "table_patents_municipal_cluster_mun_year_trend_hac.tex"
+writeLines(latex_mun_year_trend_hac, output_file_mun_year_trend_hac)
+cat("Table 2 HAC saved to:", output_file_mun_year_trend_hac, "\n")
 
 # -------------------------------------------------------------------------
 # TABLE 2B: Municipality-Year FE + State-Year Trends (HAC Standard Errors)
