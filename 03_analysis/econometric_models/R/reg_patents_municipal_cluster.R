@@ -1,7 +1,6 @@
 # ============================================================================
 # SHORT-RUN PANEL ESTIMATES - PATENT OUTCOMES (2000-2020)
-# Regressões com clustering no município e efeitos fixos estado x ano
-# SEM Conley spatial standard errors
+# Municipality clustering, with spatial + serial HAC for state-trend models
 # ============================================================================
 
 # Load required packages
@@ -11,6 +10,7 @@ library(fixest)       # For high-dimensional fixed effects
 library(sandwich)     # For robust standard errors
 library(lmtest)       # For coefficient testing
 library(data.table)   # For efficient data manipulation
+library(lfe)          # For fast two-way demeaning
 
 # ============================================================================
 # STEP ONE: LOAD AND PREPARE DATA
@@ -54,15 +54,190 @@ cat("States:", length(unique(data$code_state)), "\n")
 cat("Years:", length(unique(data$year)), "\n")
 cat("State-year combinations:", length(unique(data$state_year)), "\n\n")
 
+# Define dependent variables
+dep_vars <- c("qtd_pat", "qtd_pat_verde", "prop_verde")
+dep_labels <- c("Total Patents", "Green Patents", "Prop. Green Patents")
+
 # ============================================================================
-# STEP THREE: RUN REGRESSIONS
+# STEP THREE: PRE-COMPUTE TWO-WAY DEMEANED VARIABLES (FOR SPATIAL HAC)
+# ============================================================================
+
+cat("Pre-computing TWO-WAY demeaned variables for spatial HAC...\n")
+
+data_clean <- as.data.table(data)
+data_clean <- data_clean[!is.na(lat) & !is.na(lon) &
+                           !is.na(cont_shock_temp) & !is.na(cont_shock_precip) &
+                           !is.na(year_state_trend)]
+
+data_clean <- data_clean[!is.na(qtd_pat) | !is.na(qtd_pat_verde) | !is.na(prop_verde)]
+
+cat("Clean data observations:", nrow(data_clean), "\n\n")
+
+data_clean_df <- as.data.frame(data_clean)
+
+data_clean_df$mun_code_f <- factor(data_clean_df$mun_code)
+data_clean_df$year_f <- factor(data_clean_df$year)
+
+fe_list <- list(mun_code_f = data_clean_df$mun_code_f,
+                year_f = data_clean_df$year_f)
+
+vars_to_demean <- c(dep_vars, "cont_shock_temp", "cont_shock_precip", "year_state_trend")
+
+data_demeaned <- data_clean_df
+
+for (var in vars_to_demean) {
+  if (all(is.na(data_clean_df[[var]]))) {
+    cat("  Skipping", var, "(all NA)\n")
+    next
+  }
+
+  temp_df <- data.frame(
+    y = data_clean_df[[var]],
+    mun_code_f = data_clean_df$mun_code_f,
+    year_f = data_clean_df$year_f
+  )
+
+  demeaned <- lfe::demeanlist(temp_df[, "y", drop = FALSE],
+                              fl = fe_list,
+                              na.rm = TRUE)
+
+  data_demeaned[[paste0(var, "_dm")]] <- demeaned[[1]]
+}
+
+data_demeaned$lat <- data_clean_df$lat
+data_demeaned$lon <- data_clean_df$lon
+data_demeaned$mun_code <- data_clean_df$mun_code
+data_demeaned$year <- data_clean_df$year
+
+data_hac <- as.data.table(data_demeaned)
+
+cat("Two-way demeaning complete.\n\n")
+
+# ============================================================================
+# STEP FOUR: RUN REGRESSIONS
 # ============================================================================
 
 cat("Running regressions...\n\n")
 
-# Define dependent variables
-dep_vars <- c("qtd_pat", "qtd_pat_verde", "prop_verde")
-dep_labels <- c("Total Patents", "Green Patents", "Prop. Green Patents")
+compute_spatial_xeeX <- function(X, resid, lat, lon, time, dist_cutoff, bartlett = FALSE) {
+  k <- ncol(X)
+  xeeX <- matrix(0, k, k)
+  time_unique <- unique(time)
+
+  for (ti in time_unique) {
+    idx <- which(time == ti)
+    X1 <- X[idx, , drop = FALSE]
+    e1 <- resid[idx]
+    lat1 <- lat[idx]
+    lon1 <- lon[idx]
+
+    n1 <- length(e1)
+    if (n1 == 0) next
+
+    for (i in seq_len(n1)) {
+      lon_scale <- cos(lat1[i] * pi / 180) * 111
+      lat_scale <- 111
+
+      distance <- sqrt((lat_scale * (lat1[i] - lat1))^2 +
+                         (lon_scale * (lon1[i] - lon1))^2)
+
+      window <- as.numeric(distance <= dist_cutoff)
+
+      if (bartlett) {
+        weight <- 1 - distance / dist_cutoff
+        window <- window * weight
+      }
+
+      weighted_resid <- e1 * window
+      xeeXh <- (t(X1[i, , drop = FALSE]) * e1[i]) %*%
+        (t(weighted_resid) %*% X1)
+      xeeX <- xeeX + xeeXh
+    }
+  }
+
+  xeeX
+}
+
+compute_serial_xeeX <- function(X, resid, time, panel, lag_cutoff) {
+  k <- ncol(X)
+  xeeX <- matrix(0, k, k)
+
+  if (lag_cutoff <= 0) {
+    return(xeeX)
+  }
+
+  panel_unique <- unique(panel)
+
+  for (pi in panel_unique) {
+    idx <- which(panel == pi)
+    X1 <- X[idx, , drop = FALSE]
+    e1 <- resid[idx]
+    time1 <- time[idx]
+
+    n1 <- length(e1)
+    if (n1 == 0) next
+
+    for (t in seq_len(n1)) {
+      time_diff <- abs(time1[t] - time1)
+      weight <- 1 - (time_diff / (lag_cutoff + 1))
+      window <- (time_diff <= lag_cutoff) * weight
+      window <- window * (time1[t] != time1)
+
+      weighted_resid <- e1 * window
+      xeeXh <- (t(X1[t, , drop = FALSE]) * e1[t]) %*%
+        (t(weighted_resid) %*% X1)
+      xeeX <- xeeX + xeeXh
+    }
+  }
+
+  xeeX
+}
+
+compute_spatial_hac_vcov <- function(data, y_var, x_vars, lat_var, lon_var,
+                                     time_var, panel_var, dist_cutoff,
+                                     lag_cutoff, bartlett = FALSE) {
+  y <- data[[y_var]]
+  X <- as.matrix(data[, x_vars, drop = FALSE])
+  n <- nrow(X)
+
+  fit <- lm.fit(x = X, y = y)
+  resid <- fit$residuals
+
+  inv_xx <- solve(crossprod(X)) * n
+
+  xeeX_spatial <- compute_spatial_xeeX(
+    X = X,
+    resid = resid,
+    lat = data[[lat_var]],
+    lon = data[[lon_var]],
+    time = data[[time_var]],
+    dist_cutoff = dist_cutoff,
+    bartlett = bartlett
+  )
+
+  xeeX_serial <- compute_serial_xeeX(
+    X = X,
+    resid = resid,
+    time = data[[time_var]],
+    panel = data[[panel_var]],
+    lag_cutoff = lag_cutoff
+  )
+
+  xeeX_spatial_scaled <- xeeX_spatial / n
+  xeeX_spatial_hac_scaled <- (xeeX_spatial + xeeX_serial) / n
+
+  v_spatial <- inv_xx %*% xeeX_spatial_scaled %*% inv_xx / n
+  v_spatial_hac <- inv_xx %*% xeeX_spatial_hac_scaled %*% inv_xx / n
+
+  v_spatial <- (v_spatial + t(v_spatial)) / 2
+  v_spatial_hac <- (v_spatial_hac + t(v_spatial_hac)) / 2
+
+  list(
+    coefficients = fit$coefficients,
+    vcov_spatial = v_spatial,
+    vcov_spatial_hac = v_spatial_hac
+  )
+}
 
 # Initialize results storage
 results_basic <- list()
@@ -151,21 +326,65 @@ for(i in 1:length(dep_vars)) {
 
   model_mun_year_trend <- feols(formula_mun_year_trend, data = data, cluster = ~mun_code)
 
-  results_mun_year_trend[[i]] <- list(
-    model = model_mun_year_trend,
-    coef_temp = coef(model_mun_year_trend)["cont_shock_temp"],
-    se_temp = se(model_mun_year_trend)["cont_shock_temp"],
-    pval_temp = pvalue(model_mun_year_trend)["cont_shock_temp"],
-    coef_precip = coef(model_mun_year_trend)["cont_shock_precip"],
-    se_precip = se(model_mun_year_trend)["cont_shock_precip"],
-    pval_precip = pvalue(model_mun_year_trend)["cont_shock_precip"],
-    coef_trend = coef(model_mun_year_trend)["year_state_trend"],
-    se_trend = se(model_mun_year_trend)["year_state_trend"],
-    pval_trend = pvalue(model_mun_year_trend)["year_state_trend"],
-    n_obs = nobs(model_mun_year_trend),
-    r2 = r2(model_mun_year_trend, type = "r2"),
-    r2_adj = r2(model_mun_year_trend, type = "ar2")
-  )
+  tryCatch({
+    data_model <- data_hac[!is.na(get(paste0(dv, "_dm")))]
+    data_model_df <- as.data.frame(data_model)
+
+    hac_results <- compute_spatial_hac_vcov(
+      data = data_model_df,
+      y_var = paste0(dv, "_dm"),
+      x_vars = c("cont_shock_temp_dm", "cont_shock_precip_dm", "year_state_trend_dm"),
+      lat_var = "lat",
+      lon_var = "lon",
+      time_var = "year",
+      panel_var = "mun_code",
+      dist_cutoff = 250,
+      lag_cutoff = 6,
+      bartlett = TRUE
+    )
+
+    coefs_hac <- hac_results$coefficients
+    se_spatial_hac <- sqrt(diag(hac_results$vcov_spatial_hac))
+    tstat_hac <- coefs_hac / se_spatial_hac
+    pval_hac <- 2 * pt(abs(tstat_hac),
+                       df = nrow(data_model_df) - length(coefs_hac),
+                       lower.tail = FALSE)
+
+    results_mun_year_trend[[i]] <- list(
+      model = model_mun_year_trend,
+      coef_temp = coefs_hac["cont_shock_temp_dm"],
+      se_temp = se_spatial_hac["cont_shock_temp_dm"],
+      pval_temp = pval_hac["cont_shock_temp_dm"],
+      coef_precip = coefs_hac["cont_shock_precip_dm"],
+      se_precip = se_spatial_hac["cont_shock_precip_dm"],
+      pval_precip = pval_hac["cont_shock_precip_dm"],
+      coef_trend = coefs_hac["year_state_trend_dm"],
+      se_trend = se_spatial_hac["year_state_trend_dm"],
+      pval_trend = pval_hac["year_state_trend_dm"],
+      n_obs = nobs(model_mun_year_trend),
+      r2 = r2(model_mun_year_trend, type = "r2"),
+      r2_adj = r2(model_mun_year_trend, type = "ar2")
+    )
+  }, error = function(e) {
+    warning(paste("Spatial + serial HAC calculation failed for", dep_labels[i], ":", e$message))
+    warning("Using clustered standard errors instead.")
+
+    results_mun_year_trend[[i]] <<- list(
+      model = model_mun_year_trend,
+      coef_temp = coef(model_mun_year_trend)["cont_shock_temp"],
+      se_temp = se(model_mun_year_trend)["cont_shock_temp"],
+      pval_temp = pvalue(model_mun_year_trend)["cont_shock_temp"],
+      coef_precip = coef(model_mun_year_trend)["cont_shock_precip"],
+      se_precip = se(model_mun_year_trend)["cont_shock_precip"],
+      pval_precip = pvalue(model_mun_year_trend)["cont_shock_precip"],
+      coef_trend = coef(model_mun_year_trend)["year_state_trend"],
+      se_trend = se(model_mun_year_trend)["year_state_trend"],
+      pval_trend = pvalue(model_mun_year_trend)["year_state_trend"],
+      n_obs = nobs(model_mun_year_trend),
+      r2 = r2(model_mun_year_trend, type = "r2"),
+      r2_adj = r2(model_mun_year_trend, type = "ar2")
+    )
+  })
 
   cat("  Temperature coef:   ", sprintf("%.4f", results_mun_year_trend[[i]]$coef_temp), "\n")
   cat("  Temperature SE:     ", sprintf("%.4f", results_mun_year_trend[[i]]$se_temp), "\n")
@@ -414,7 +633,7 @@ latex_mun_year_trend <- c(
   "\\end{tabular}",
   "\\begin{tablenotes}",
   "\\footnotesize",
-  "\\item \\textit{Note:} Dependent variables are Total Patents (1), Green Patents (2), and Proportion of Green Patents (3). Temperature and precipitation are measured as standard deviations from historical means. All regressions include municipality×year fixed effects and state-specific linear time trends (year×state). Standard errors are clustered at the municipality level and shown in parentheses.",
+  "\\item \\textit{Note:} Dependent variables are Total Patents (1), Green Patents (2), and Proportion of Green Patents (3). Temperature and precipitation are measured as standard deviations from historical means. All regressions include municipality×year fixed effects and state-specific linear time trends (year×state). Standard errors use spatial (Conley 1999, 250 km) and serial (Newey-West 1987, 6-year lags) HAC adjustments following the translated Stata ols\\_spatial\\_HAC logic, shown in parentheses.",
   "\\item \\textsuperscript{*} p < 0.10, \\textsuperscript{**} p < 0.05, \\textsuperscript{***} p < 0.01",
   "\\end{tablenotes}",
   "\\end{threeparttable}%",
@@ -476,7 +695,7 @@ for(i in 1:3) {
 
 cat(rep("=", 80), "\n", sep = "")
 cat("*** p<0.01, ** p<0.05, * p<0.10\n")
-cat("Standard errors clustered at municipality level (no Conley spatial correction)\n")
+cat("Standard errors for state-trend models use spatial + serial HAC (Conley 1999; Newey-West 1987)\n")
 cat(rep("=", 80), "\n\n", sep = "")
 
 cat("Analysis complete!\n")
