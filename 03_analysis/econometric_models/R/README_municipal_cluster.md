@@ -43,23 +43,32 @@ Script master que executa todas as análises sequencialmente.
 
 ## Especificações Econométricas
 
-**Modelo Básico (Município FE + Ano FE):**
+**Modelo 1 - Básico (Município FE + Ano FE):**
 ```
 Y_mt = β*T_mt + η*P_mt + α_m + γ_t + ε_mt
 ```
 - α_m = efeito fixo município
 - γ_t = efeito fixo ano
 
-**Modelo Estado×Ano (Município FE + Estado×Ano FE):**
+**Modelo 2 - Estado×Ano (Município FE + Estado×Ano FE):**
 ```
 Y_mt = β*T_mt + η*P_mt + α_m + γ_st + ε_mt
 ```
 - α_m = efeito fixo município
 - γ_st = efeito fixo estado×ano
 
+**Modelo 3 - Município×Ano FE + Tendências Estado-Ano (NOVO):**
+```
+Y_mt = β*T_mt + η*P_mt + δ*(year × state) + α_mt + ε_mt
+```
+- α_mt = efeito fixo município×ano
+- year × state = tendência linear específica do estado
+- Este é o modelo mais conservador, controlando por variação temporal dentro de cada município e por tendências estado-específicas
+
 **Variáveis independentes (todas as análises):**
 - `cont_shock_temp`: Choque de temperatura (desvios padrão)
 - `cont_shock_precip`: Choque de precipitação (desvios padrão)
+- `year_state_trend`: Tendência estado-ano (year × code_state) - apenas Modelo 3
 
 **Erros padrão:**
 - Clusterizados no nível do município
@@ -101,15 +110,18 @@ source("run_all_municipal_cluster.R")
 ## Outputs
 
 ### Emprego (reg_employment_municipal_cluster.R)
-1. `table_employment_municipal_cluster_basic.tex` - Modelos com Município FE + Ano FE
-2. `table_employment_municipal_cluster_state_year.tex` - Modelos com Município FE + Estado×Ano FE
-3. `table_employment_municipal_cluster_comparison.tex` - Comparação lado a lado
+1. `table_employment_municipal_cluster_basic.tex` - Modelo 1: Município FE + Ano FE
+2. `table_employment_municipal_cluster_state_year.tex` - Modelo 2: Município FE + Estado×Ano FE
+3. `table_employment_municipal_cluster_comparison.tex` - Comparação Modelos 1 vs 2
+4. `table_employment_municipal_cluster_mun_year_trend.tex` - Modelo 3: Município×Ano FE + Tendências Estado-Ano
 
 ### Patentes (reg_patents_municipal_cluster.R)
-4. `table_patents_municipal_cluster_comparison.tex` - Comparação Year FE vs State×Year FE
+5. `table_patents_municipal_cluster_comparison.tex` - Comparação Modelos 1 vs 2
+6. `table_patents_municipal_cluster_mun_year_trend.tex` - Modelo 3: Município×Ano FE + Tendências Estado-Ano
 
 ### Firmas (reg_firms_municipal_cluster.R)
-5. `table_firms_municipal_cluster_comparison.tex` - Comparação Year FE vs State×Year FE
+7. `table_firms_municipal_cluster_comparison.tex` - Comparação Modelos 1 vs 2
+8. `table_firms_municipal_cluster_mun_year_trend.tex` - Modelo 3: Município×Ano FE + Tendências Estado-Ano
 
 ## Estrutura dos Dados
 
@@ -168,15 +180,29 @@ source("run_all_municipal_cluster.R")
 
 ### Quando Usar Cada Especificação?
 
-**Modelo Básico (Município + Ano FE):**
+**Modelo 1 - Básico (Município + Ano FE):**
 - Identifica o efeito usando variação dentro do município ao longo do tempo
 - Controla por tendências nacionais (FE ano)
 - Assume que choques temporais são comuns a todos os estados
+- Menos conservador, mais poder estatístico
 
-**Modelo Estado×Ano FE:**
+**Modelo 2 - Estado×Ano FE:**
 - Identifica o efeito usando variação dentro do município, controlando por tendências estado-específicas
-- Mais conservador (remove mais variação)
+- Mais conservador que Modelo 1 (remove mais variação)
 - Útil se há preocupação com choques específicos do estado
+- Controla por políticas estaduais que variam no tempo
+
+**Modelo 3 - Município×Ano FE + Tendências Estado-Ano (NOVO):**
+- **Especificação mais conservadora** de todas
+- Identifica o efeito usando variação residual após controlar por:
+  - Todos os fatores município-ano específicos (α_mt)
+  - Tendências lineares específicas de cada estado
+- Útil para testes de robustez extrema
+- Pode ter poder estatístico limitado devido ao alto nível de controles
+- Recomendado quando há preocupação com:
+  - Tendências estado-específicas não-lineares
+  - Políticas estaduais com efeitos graduais ao longo do tempo
+  - Choques econômicos estaduais correlacionados com clima
 
 ## Notas Metodológicas
 
