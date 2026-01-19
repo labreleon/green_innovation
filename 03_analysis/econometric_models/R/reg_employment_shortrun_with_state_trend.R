@@ -7,7 +7,8 @@
 # reg2hdfespatial Y X year_state_trend, timevar(year) panelvar(mun_code)
 #                 lat(lat) lon(lon) distcutoff(250) lagcutoff(6)
 #
-# Uses Conley spatial standard errors (250 km, 6-year lag)
+# Uses Conley spatial standard errors (250 km, 7-year lag)
+# Note: Stata lagcutoff(6) = 7-year lags (includes current period)
 # ============================================================================
 
 # Load required packages
@@ -212,7 +213,10 @@ for(i in 1:length(dep_vars)) {
       lat = "lat",
       lon = "lon",
       dist_cutoff = 250,    # 250 km spatial correlation
-      lag_cutoff = 6        # 6-year temporal correlation (CHANGED FROM 7 TO MATCH STATA)
+      lag_cutoff = 7        # 7-year temporal correlation
+                            # Stata lagcutoff(6) uses formula: w(L) = 1 - L/7
+                            # This considers lags L=0,1,2,3,4,5,6 (7 values total)
+                            # Hence "7-year lags" in the paper
     )
 
     # Extract Conley standard errors
@@ -396,7 +400,7 @@ latex_lines <- c(
   "\\end{tabular}",
   "\\begin{tablenotes}",
   "\\footnotesize",
-  "\\item \\textit{Note:} The dependent variables are Total Jobs (Column 1), Green jobs (Column 2), and proportion of green jobs (Column 3). Temperature and precipitation are measured as standard deviations from their historical means. The variable $year \\times state$ captures state-specific linear time trends. The municipal-level panel data combine weather variables from Terra Climate and employment records from RAIS. Green jobs are classified using FEBRABAN's Green Taxonomy. All regressions include municipal fixed effects, year fixed effects, and state-specific linear time trends, with standard errors adjusted for spatial dependence (Conley 1999, up to 250 km) and serial correlation (Newey-West 1987, up to 6-year lags). Municipal distances are calculated from centroid coordinates.\\\\",
+  "\\item \\textit{Note:} The dependent variables are Total Jobs (Column 1), Green jobs (Column 2), and proportion of green jobs (Column 3). Temperature and precipitation are measured as standard deviations from their historical means. The variable $year \\times state$ captures state-specific linear time trends. The municipal-level panel data combine weather variables from Terra Climate and employment records from RAIS. Green jobs are classified using FEBRABAN's Green Taxonomy. All regressions include municipal fixed effects, year fixed effects, and state-specific linear time trends, with standard errors adjusted for spatial dependence (Conley 1999, up to 250 km) and serial correlation (Newey-West 1987, up to 7-year lags). Municipal distances are calculated from centroid coordinates.\\\\",
   "\\textsuperscript{*} p < 0.10, \\textsuperscript{**} p < 0.05, \\textsuperscript{***} p < 0.01",
   "\\end{tablenotes}",
   "\\end{threeparttable}%",
@@ -436,7 +440,7 @@ for(i in 1:3) {
 cat("\n", rep("=", 70), "\n", sep = "")
 cat("*** p<0.01, ** p<0.05, * p<0.10\n")
 cat("Standard errors adjusted for spatial dependence (Conley 1999, up to 250 km)\n")
-cat("and serial correlation (Newey-West 1987, up to 6-year lags)\n")
+cat("and serial correlation (Newey-West 1987, up to 7-year lags)\n")
 cat("Model includes: Municipality FE + Year FE + State-Year Trends\n")
 cat("TWO-WAY demeaning used to match Stata reg2hdfespatial exactly\n")
 cat(rep("=", 70), "\n\n", sep = "")
@@ -460,9 +464,10 @@ cat(rep("=", 70), "\n\n", sep = "")
 #    - Stata runs: ols_spatial_HAC Y X (on demeaned data, no year dummies)
 #    - R now runs: conleyreg(Y_dm ~ X_dm - 1) (same approach)
 #
-# 3. lag_cutoff = 6: Changed from 7 to match Stata exactly
-#    - Stata uses lagcutoff(6) in most short-run models
-#    - This affects Newey-West temporal correlation correction
+# 3. lag_cutoff = 7: Matches Stata lagcutoff(6) behavior
+#    - Stata lagcutoff(6) uses Bartlett formula: w(L) = 1 - L/(lagcutoff+1) = 1 - L/7
+#    - Considers lags L = 0,1,2,3,4,5,6 (7 values total = "7-year lags")
+#    - conleyreg likely uses w(L) = 1 - L/lag_cutoff, so we set lag_cutoff = 7
 #
 # 4. year_state_trend treatment:
 #    - Created as: year * code_state
