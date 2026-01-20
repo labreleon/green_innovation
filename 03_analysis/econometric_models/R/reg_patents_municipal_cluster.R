@@ -13,6 +13,30 @@ library(data.table)   # For efficient data manipulation
 library(lfe)          # For fast two-way demeaning
 
 # ============================================================================
+# OPTIONAL POPULATION WEIGHTS
+# ============================================================================
+
+weight_var <- if (exists("population_weight_var", inherits = TRUE)) {
+  population_weight_var
+} else {
+  NULL
+}
+
+resolve_weight_formula <- function(df) {
+  if (!is.null(weight_var) && weight_var %in% names(df)) {
+    return(as.formula(paste0("~", weight_var)))
+  }
+  NULL
+}
+
+resolve_weight_vector <- function(df) {
+  if (!is.null(weight_var) && weight_var %in% names(df)) {
+    return(df[[weight_var]])
+  }
+  NULL
+}
+
+# ============================================================================
 # STEP ONE: LOAD AND PREPARE DATA
 # ============================================================================
 
@@ -24,6 +48,11 @@ data <- read_dta("./output/final_base/weather_patent.dta")
 # Filter for years 2000-2020
 data <- data %>%
   filter(year >= 2000 & year <= 2020)
+
+if (!is.null(weight_var) && weight_var %in% names(data)) {
+  data <- data %>%
+    filter(!is.na(.data[[weight_var]]), .data[[weight_var]] > 0)
+}
 
 cat("Data loaded. Observations:", nrow(data), "\n")
 
@@ -70,6 +99,10 @@ data_clean <- data_clean[!is.na(lat) & !is.na(lon) &
                            !is.na(year_state_trend)]
 
 data_clean <- data_clean[!is.na(qtd_pat) | !is.na(qtd_pat_verde) | !is.na(prop_verde)]
+
+if (!is.null(weight_var) && weight_var %in% names(data_clean)) {
+  data_clean <- data_clean[!is.na(get(weight_var)) & get(weight_var) > 0]
+}
 
 cat("Clean data observations:", nrow(data_clean), "\n\n")
 
@@ -187,10 +220,17 @@ compute_serial_xeeX <- function(X, resid, time, panel, lag_cutoff) {
 
 compute_spatial_hac_vcov <- function(data, y_var, x_vars, lat_var, lon_var,
                                      time_var, panel_var, dist_cutoff,
-                                     lag_cutoff, bartlett = FALSE) {
+                                     lag_cutoff, bartlett = FALSE,
+                                     weights = NULL) {
   y <- data[[y_var]]
   X <- as.matrix(data[, x_vars, drop = FALSE])
   n <- nrow(X)
+
+  if (!is.null(weights)) {
+    weight_scale <- sqrt(weights)
+    y <- y * weight_scale
+    X <- X * weight_scale
+  }
 
   fit <- lm.fit(x = X, y = y)
   resid <- fit$residuals
@@ -255,7 +295,12 @@ for(i in 1:length(dep_vars)) {
 
   formula_basic <- as.formula(paste0(dv, " ~ cont_shock_temp + cont_shock_precip | mun_code + year"))
 
-  model_basic <- feols(formula_basic, data = data, cluster = ~mun_code)
+  model_basic <- feols(
+    formula_basic,
+    data = data,
+    weights = resolve_weight_formula(data),
+    cluster = ~mun_code
+  )
 
   results_basic[[i]] <- list(
     model = model_basic,
@@ -284,7 +329,8 @@ for(i in 1:length(dep_vars)) {
       panel_var = "mun_code",
       dist_cutoff = 250,
       lag_cutoff = 6,
-      bartlett = TRUE
+      bartlett = TRUE,
+      weights = resolve_weight_vector(data_model_df)
     )
 
     coefs_hac <- hac_results$coefficients
@@ -321,7 +367,8 @@ for(i in 1:length(dep_vars)) {
       panel_var = "mun_code",
       dist_cutoff = 250,
       lag_cutoff = 6,
-      bartlett = TRUE
+      bartlett = TRUE,
+      weights = resolve_weight_vector(data_model_df)
     )
 
     coefs_hac <- hac_results$coefficients
@@ -358,7 +405,8 @@ for(i in 1:length(dep_vars)) {
       panel_var = "mun_code",
       dist_cutoff = 250,
       lag_cutoff = 6,
-      bartlett = TRUE
+      bartlett = TRUE,
+      weights = resolve_weight_vector(data_model_df)
     )
 
     coefs_hac <- hac_results$coefficients
@@ -398,7 +446,12 @@ for(i in 1:length(dep_vars)) {
 
   formula_state_year <- as.formula(paste0(dv, " ~ cont_shock_temp + cont_shock_precip | mun_code + state_year"))
 
-  model_state_year <- feols(formula_state_year, data = data, cluster = ~mun_code)
+  model_state_year <- feols(
+    formula_state_year,
+    data = data,
+    weights = resolve_weight_formula(data),
+    cluster = ~mun_code
+  )
 
   results_state_year[[i]] <- list(
     model = model_state_year,
@@ -427,7 +480,8 @@ for(i in 1:length(dep_vars)) {
       panel_var = "mun_code",
       dist_cutoff = 250,
       lag_cutoff = 6,
-      bartlett = TRUE
+      bartlett = TRUE,
+      weights = resolve_weight_vector(data_model_df)
     )
 
     coefs_hac <- hac_results$coefficients
@@ -464,7 +518,8 @@ for(i in 1:length(dep_vars)) {
       panel_var = "mun_code",
       dist_cutoff = 250,
       lag_cutoff = 6,
-      bartlett = TRUE
+      bartlett = TRUE,
+      weights = resolve_weight_vector(data_model_df)
     )
 
     coefs_hac <- hac_results$coefficients
@@ -501,7 +556,8 @@ for(i in 1:length(dep_vars)) {
       panel_var = "mun_code",
       dist_cutoff = 250,
       lag_cutoff = 6,
-      bartlett = TRUE
+      bartlett = TRUE,
+      weights = resolve_weight_vector(data_model_df)
     )
 
     coefs_hac <- hac_results$coefficients
@@ -541,7 +597,12 @@ for(i in 1:length(dep_vars)) {
 
   formula_mun_year_trend <- as.formula(paste0(dv, " ~ cont_shock_temp + cont_shock_precip + year_state_trend | mun_code + year"))
 
-  model_mun_year_trend <- feols(formula_mun_year_trend, data = data, cluster = ~mun_code)
+  model_mun_year_trend <- feols(
+    formula_mun_year_trend,
+    data = data,
+    weights = resolve_weight_formula(data),
+    cluster = ~mun_code
+  )
 
   results_mun_year_trend[[i]] <- list(
     model = model_mun_year_trend,
@@ -573,7 +634,8 @@ for(i in 1:length(dep_vars)) {
       panel_var = "mun_code",
       dist_cutoff = 250,
       lag_cutoff = 6,
-      bartlett = TRUE
+      bartlett = TRUE,
+      weights = resolve_weight_vector(data_model_df)
     )
 
     coefs_hac <- hac_results$coefficients
