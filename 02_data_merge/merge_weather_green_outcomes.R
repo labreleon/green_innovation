@@ -75,8 +75,6 @@ weather_rais[, TotalVinculosVerdes_b := TotalVinculosVerdes_b / population * 100
 
 
 
-weather_rais<- weather_rais[,population:= NULL]
-
 weather_rais <- weather_rais[!is.na(TotalVinculosVerdes),]
 weather_rais <- weather_rais[!is.na(cont_shock_temperature),]
 
@@ -113,7 +111,8 @@ colnames(weather_rais) <- c(
   "code_state",
   "cod_rgi",          # cod_rgi
   "lat",              # latitude
-  "lon"
+  "lon",
+  "population"
   )
 
 
@@ -130,8 +129,6 @@ weather_patent <- merge(weather_patent, controles,
 
 weather_patent[, Quantidade_Patentes_5_anos  := Quantidade_Patentes_5_anos / population*1000]
 weather_patent[, Quantidade_Patentes_verdes_5_anos := Quantidade_Patentes_verdes_5_anos / population * 1000]
-
-weather_patent <- weather_patent[,population:= NULL]
 
 weather_patent <- weather_patent[
   , if (sum(Quantidade_Patentes) > 0) .SD, 
@@ -180,7 +177,8 @@ colnames(weather_patent) <- c(
   "code_state",
   "cod_rgi",          # cod_rgi
   "lat",              # latitude
-  "lon"               # longitude
+  "lon",              # longitude
+  "population"
 )
 
 
@@ -200,8 +198,6 @@ weather_quadro_societario[, firmas_ativas_verde := firmas_ativas_verde / populat
 weather_quadro_societario[, firmas_ativas_b := firmas_ativas_b / population*1000]
 weather_quadro_societario[, firmas_ativas_verde_b := firmas_ativas_verde_b / population * 1000]
 
-
-weather_quadro_societario <- weather_quadro_societario[,population:= NULL]
 
 
 weather_quadro_societario <- weather_quadro_societario[!is.na(firmas_ativas),]
@@ -241,7 +237,8 @@ colnames(weather_quadro_societario) <- c(
   "code_state",
   "cod_rgi",          # cod_rgi
   "lat",              # latitude
-  "lon"               # longitude
+  "lon",              # longitude
+  "population"
 )
 
 
