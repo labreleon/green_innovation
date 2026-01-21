@@ -49,9 +49,10 @@ data <- read_dta("./output/final_base/weather_patent.dta")
 data <- data %>%
   filter(year >= 2000 & year <= 2020)
 
+data <- as.data.table(data)
+
 if (!is.null(weight_var) && weight_var %in% names(data)) {
-  data <- data %>%
-    filter(!is.na(.data[[weight_var]]), .data[[weight_var]] > 0)
+  data <- data[!is.na(get(weight_var)) & get(weight_var) > 0]
 }
 
 cat("Data loaded. Observations:", nrow(data), "\n")
@@ -95,7 +96,7 @@ cat("Overwriting outcome variables with lagged versions...\n")
 # Garantir ordenação correta
 setorderv(data, c("mun_code", "year"))
 
-for (dep_var in base_dep_vars) {
+for (dep_var in dep_vars) {
   for (k in OUTCOME_LAGS) {
     data[, (dep_var) := shift(get(dep_var), n = k, type = "lag"), by = mun_code]
     cat("  Overwritten with lag", k, ":", dep_var, "\n")
