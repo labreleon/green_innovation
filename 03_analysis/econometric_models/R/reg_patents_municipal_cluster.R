@@ -258,6 +258,7 @@ compute_spatial_hac_vcov <- function(data, y_var, x_vars, lat_var, lon_var,
   X <- as.matrix(data[, x_vars, drop = FALSE])
   n <- nrow(X)
 
+  weight_scale <- NULL
   if (!is.null(weights)) {
     weight_scale <- sqrt(weights)
     y <- y * weight_scale
@@ -265,7 +266,13 @@ compute_spatial_hac_vcov <- function(data, y_var, x_vars, lat_var, lon_var,
   }
 
   fit <- lm.fit(x = X, y = y)
-  resid <- fit$residuals
+
+  # For HAC calculation, use residuals in original scale (not transformed)
+  if (!is.null(weight_scale)) {
+    resid <- fit$residuals / weight_scale
+  } else {
+    resid <- fit$residuals
+  }
 
   inv_xx <- solve(crossprod(X)) * n
 

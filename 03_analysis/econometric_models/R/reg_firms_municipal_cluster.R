@@ -110,29 +110,61 @@ data_clean_df <- as.data.frame(data_clean)
 
 vars_to_demean <- c(dep_vars, "cont_shock_temp", "cont_shock_precip", "year_state_trend")
 
-demean_two_way <- function(df, fe_var1, fe_var2, vars) {
+demean_two_way <- function(df, fe_var1, fe_var2, vars, weights = NULL, max_iter = 200, tol = 1e-8) {
   df_out <- df
-  fe_list <- list(
-    fe1 = factor(df[[fe_var1]]),
-    fe2 = factor(df[[fe_var2]])
-  )
+  fe1 <- factor(df[[fe_var1]])
+  fe2 <- factor(df[[fe_var2]])
+  if (is.null(weights) && !is.null(weight_var) && weight_var %in% names(df)) {
+    weights <- df[[weight_var]]
+  }
 
   for (var in vars) {
     if (all(is.na(df[[var]]))) {
       next
     }
 
-    temp_df <- data.frame(
-      y = df[[var]],
-      fe1 = fe_list$fe1,
-      fe2 = fe_list$fe2
-    )
+    if (is.null(weights)) {
+      temp_df <- data.frame(
+        y = df[[var]],
+        fe1 = fe1,
+        fe2 = fe2
+      )
 
-    demeaned <- lfe::demeanlist(temp_df[, "y", drop = FALSE],
-                                fl = fe_list,
-                                na.rm = TRUE)
+      demeaned <- lfe::demeanlist(temp_df[, "y", drop = FALSE],
+                                  fl = list(fe1 = fe1, fe2 = fe2),
+                                  na.rm = TRUE)
 
-    df_out[[paste0(var, "_dm")]] <- demeaned[[1]]
+      df_out[[paste0(var, "_dm")]] <- demeaned[[1]]
+    } else {
+      x <- df[[var]]
+      x_demean <- x
+      w <- weights
+
+      for (iter in seq_len(max_iter)) {
+        x_old <- x_demean
+        dt1 <- data.table(x = x_demean, w = w, fe1 = fe1)
+        dt1[, mean1 := ifelse(
+          sum(w[!is.na(x)]) == 0,
+          NA_real_,
+          sum(w * x, na.rm = TRUE) / sum(w[!is.na(x)])
+        ), by = fe1]
+        x_demean <- dt1$x - dt1$mean1
+
+        dt2 <- data.table(x = x_demean, w = w, fe2 = fe2)
+        dt2[, mean2 := ifelse(
+          sum(w[!is.na(x)]) == 0,
+          NA_real_,
+          sum(w * x, na.rm = TRUE) / sum(w[!is.na(x)])
+        ), by = fe2]
+        x_demean <- dt2$x - dt2$mean2
+
+        if (max(abs(x_demean - x_old), na.rm = TRUE) < tol) {
+          break
+        }
+      }
+
+      df_out[[paste0(var, "_dm")]] <- x_demean
+    }
   }
 
   df_out
@@ -226,6 +258,7 @@ compute_spatial_hac_vcov <- function(data, y_var, x_vars, lat_var, lon_var,
   X <- as.matrix(data[, x_vars, drop = FALSE])
   n <- nrow(X)
 
+  weight_scale <- NULL
   if (!is.null(weights)) {
     weight_scale <- sqrt(weights)
     y <- y * weight_scale
@@ -233,7 +266,13 @@ compute_spatial_hac_vcov <- function(data, y_var, x_vars, lat_var, lon_var,
   }
 
   fit <- lm.fit(x = X, y = y)
-  resid <- fit$residuals
+
+  # For HAC calculation, use residuals in original scale (not transformed)
+  if (!is.null(weight_scale)) {
+    resid <- fit$residuals / weight_scale
+  } else {
+    resid <- fit$residuals
+  }
 
   inv_xx <- solve(crossprod(X)) * n
 
