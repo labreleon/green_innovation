@@ -951,21 +951,39 @@ for(i in 1:3) {
   cat("  [Baseline Clustered] Temperature (β):   ", format_coef(results_basic[[i]]$coef_temp, 3),
       " (", format_coef(results_basic[[i]]$se_temp, 3), ")",
       add_stars(results_basic[[i]]$pval_temp), "\n", sep = "")
+  cat("  [Baseline Clustered] Precipitation (η): ", format_coef(results_basic[[i]]$coef_precip, 3),
+      " (", format_coef(results_basic[[i]]$se_precip, 3), ")",
+      add_stars(results_basic[[i]]$pval_precip), "\n", sep = "")
   cat("  [Baseline HAC]       Temperature (β):   ", format_coef(extract_or_na(results_basic_hac, i, "coef_temp"), 3),
       " (", format_coef(extract_or_na(results_basic_hac, i, "se_temp"), 3), ")",
       add_stars(extract_or_na(results_basic_hac, i, "pval_temp")), "\n", sep = "")
+  cat("  [Baseline HAC]       Precipitation (η): ", format_coef(extract_or_na(results_basic_hac, i, "coef_precip"), 3),
+      " (", format_coef(extract_or_na(results_basic_hac, i, "se_precip"), 3), ")",
+      add_stars(extract_or_na(results_basic_hac, i, "pval_precip")), "\n", sep = "")
   cat("  [State×Year Clustered] Temperature (β): ", format_coef(results_state_year[[i]]$coef_temp, 3),
       " (", format_coef(results_state_year[[i]]$se_temp, 3), ")",
       add_stars(results_state_year[[i]]$pval_temp), "\n", sep = "")
+  cat("  [State×Year Clustered] Precipitation (η): ", format_coef(results_state_year[[i]]$coef_precip, 3),
+      " (", format_coef(results_state_year[[i]]$se_precip, 3), ")",
+      add_stars(results_state_year[[i]]$pval_precip), "\n", sep = "")
   cat("  [State×Year HAC]      Temperature (β): ", format_coef(extract_or_na(results_state_year_hac, i, "coef_temp"), 3),
       " (", format_coef(extract_or_na(results_state_year_hac, i, "se_temp"), 3), ")",
       add_stars(extract_or_na(results_state_year_hac, i, "pval_temp")), "\n", sep = "")
+  cat("  [State×Year HAC]      Precipitation (η): ", format_coef(extract_or_na(results_state_year_hac, i, "coef_precip"), 3),
+      " (", format_coef(extract_or_na(results_state_year_hac, i, "se_precip"), 3), ")",
+      add_stars(extract_or_na(results_state_year_hac, i, "pval_precip")), "\n", sep = "")
   cat("  [Trend Clustered] Temperature (β):     ", format_coef(results_mun_year_trend[[i]]$coef_temp, 3),
       " (", format_coef(results_mun_year_trend[[i]]$se_temp, 3), ")",
       add_stars(results_mun_year_trend[[i]]$pval_temp), "\n", sep = "")
+  cat("  [Trend Clustered] Precipitation (η):   ", format_coef(results_mun_year_trend[[i]]$coef_precip, 3),
+      " (", format_coef(results_mun_year_trend[[i]]$se_precip, 3), ")",
+      add_stars(results_mun_year_trend[[i]]$pval_precip), "\n", sep = "")
   cat("  [Trend HAC] Temperature (β):           ", format_coef(extract_or_na(results_mun_year_trend_hac, i, "coef_temp"), 3),
       " (", format_coef(extract_or_na(results_mun_year_trend_hac, i, "se_temp"), 3), ")",
       add_stars(extract_or_na(results_mun_year_trend_hac, i, "pval_temp")), "\n", sep = "")
+  cat("  [Trend HAC] Precipitation (η):         ", format_coef(extract_or_na(results_mun_year_trend_hac, i, "coef_precip"), 3),
+      " (", format_coef(extract_or_na(results_mun_year_trend_hac, i, "se_precip"), 3), ")",
+      add_stars(extract_or_na(results_mun_year_trend_hac, i, "pval_precip")), "\n", sep = "")
   cat("  Observations (trend):                  ", results_mun_year_trend[[i]]$n_obs, "\n", sep = "")
   cat("  R² (trend):                            ", format_coef(results_mun_year_trend[[i]]$r2, 3), "\n", sep = "")
 }
