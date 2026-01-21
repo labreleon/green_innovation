@@ -27,6 +27,11 @@
 # 5. FALSIFICATION TEST COM OUTCOMES NAO-AFETADOS
 #    - Testa efeitos em variaveis que nao deveriam responder a clima
 #
+# 6. PLACEBO COM OUTCOMES PASSADOS (REVERSE CAUSALITY)
+#    - Usa choques atuais para prever outcomes PASSADOS
+#    - Se Shock_t afeta Y_{t-k}, ha problema de identificacao
+#    - Teste fundamental: causa nao pode preceder efeito
+#
 # ============================================================================
 
 # Load required packages
@@ -804,6 +809,205 @@ run_event_study <- function(data, dep_var, shock_var = "cont_shock_temp",
 }
 
 # ============================================================================
+# TEST 6: PLACEBO COM OUTCOMES PASSADOS (REVERSE CAUSALITY)
+# ============================================================================
+#
+# CONCEITO: Usamos os choques climaticos ATUAIS (t) como variavel independente
+# para prever outcomes PASSADOS (t-k). Isso testa causalidade reversa.
+#
+# Modelo:
+#   Y_{t-k} = beta_0 + beta_1*Shock_t + beta_2*Precip_t + alpha_i + gamma_t + epsilon
+#
+# H0: beta_1 = beta_2 = 0 (choques atuais nao afetam passado)
+# H1: beta != 0 (problema de identificacao - possivelmente tendencias correlacionadas)
+#
+# Se rejeitarmos H0, significa que ha correlacao espuria entre choques e
+# outcomes que nao pode ser causal (futuro nao causa passado).
+#
+# ============================================================================
+
+run_lagged_outcome_placebo <- function(data, dep_var, shock_var = "cont_shock_temp",
+                                        outcome_lags = c(1, 2, 3, 5), label = "") {
+
+  cat("\n", "=" %>% rep(70) %>% paste(collapse = ""), "\n")
+  cat("TEST 6: LAGGED OUTCOME PLACEBO (REVERSE CAUSALITY) -", label, "\n")
+  cat("Dependent Variable:", dep_var, "\n")
+  cat("Testing if CURRENT shocks predict PAST outcomes\n")
+  cat("Outcome lags tested:", paste(outcome_lags, collapse = ", "), "years\n")
+  cat("=" %>% rep(70) %>% paste(collapse = ""), "\n\n")
+
+  if (is.null(data)) {
+    cat("Data not available. Skipping test.\n")
+    return(NULL)
+  }
+
+  dt <- copy(data)
+  setorderv(dt, c("mun_code", "year"))
+
+  # Create lagged outcome variables (Y_{t-k})
+  for (k in outcome_lags) {
+    lag_outcome_name <- paste0(dep_var, "_lag", k)
+    dt[, (lag_outcome_name) := shift(get(dep_var), n = k, type = "lag"), by = mun_code]
+  }
+
+  cat("Model specification:\n")
+  cat("  Y_{t-k} = beta_1 * Shock_t + beta_2 * Precip_t + alpha_i + gamma_t + epsilon\n\n")
+  cat("Interpretation: If beta != 0, current shocks 'predict' past outcomes,\n")
+  cat("                which is impossible causally => spurious correlation.\n\n")
+
+  results <- list()
+  results_summary <- data.frame(
+    outcome_lag = integer(),
+    coef_temp = numeric(),
+    se_temp = numeric(),
+    pval_temp = numeric(),
+    coef_precip = numeric(),
+    se_precip = numeric(),
+    pval_precip = numeric(),
+    n_obs = integer(),
+    significant = character()
+  )
+
+  cat("-" %>% rep(70) %>% paste(collapse = ""), "\n")
+  cat(sprintf("%-12s %15s %15s %15s %10s\n",
+              "Outcome Lag", "Temp Coef (SE)", "Precip Coef (SE)", "N Obs", "Signif?"))
+  cat("-" %>% rep(70) %>% paste(collapse = ""), "\n")
+
+  for (k in outcome_lags) {
+    lag_outcome_name <- paste0(dep_var, "_lag", k)
+
+    # Skip if lagged outcome doesn't exist or has too few observations
+    if (!lag_outcome_name %in% names(dt)) {
+      cat(sprintf("%-12s Could not create lagged outcome. Skipping.\n", paste0("Y_{t-", k, "}")))
+      next
+    }
+
+    # Check for sufficient non-missing observations
+    n_valid <- sum(!is.na(dt[[lag_outcome_name]]) & !is.na(dt[[shock_var]]))
+    if (n_valid < 100) {
+      cat(sprintf("%-12s Insufficient observations (%d). Skipping.\n",
+                  paste0("Y_{t-", k, "}"), n_valid))
+      next
+    }
+
+    # Formula: Lagged outcome ~ Current shocks | FE
+    formula_placebo <- as.formula(paste0(
+      lag_outcome_name, " ~ ", shock_var, " + cont_shock_precip | mun_code + year"
+    ))
+
+    tryCatch({
+      model <- feols(formula_placebo, data = dt, cluster = ~mun_code)
+
+      coef_temp <- coef(model)[shock_var]
+      se_temp <- se(model)[shock_var]
+      pval_temp <- pvalue(model)[shock_var]
+
+      coef_precip <- coef(model)["cont_shock_precip"]
+      se_precip <- se(model)["cont_shock_precip"]
+      pval_precip <- pvalue(model)["cont_shock_precip"]
+
+      # Determine significance
+      sig_temp <- pval_temp < ALPHA
+      sig_precip <- pval_precip < ALPHA
+      sig_indicator <- ifelse(sig_temp | sig_precip,
+                              paste0(ifelse(sig_temp, "T", ""), ifelse(sig_precip, "P", "")),
+                              "No")
+
+      # Print results
+      cat(sprintf("%-12s %7.4f (%5.4f) %7.4f (%5.4f) %10d %10s\n",
+                  paste0("Y_{t-", k, "}"),
+                  coef_temp, se_temp,
+                  coef_precip, se_precip,
+                  nobs(model),
+                  sig_indicator))
+
+      # Store results
+      results[[paste0("lag", k)]] <- model
+
+      results_summary <- rbind(results_summary, data.frame(
+        outcome_lag = k,
+        coef_temp = coef_temp,
+        se_temp = se_temp,
+        pval_temp = pval_temp,
+        coef_precip = coef_precip,
+        se_precip = se_precip,
+        pval_precip = pval_precip,
+        n_obs = nobs(model),
+        significant = sig_indicator
+      ))
+
+    }, error = function(e) {
+      cat(sprintf("%-12s Error: %s\n", paste0("Y_{t-", k, "}"), e$message))
+    })
+  }
+
+  cat("-" %>% rep(70) %>% paste(collapse = ""), "\n")
+  cat("Significance: T = Temperature significant, P = Precipitation significant\n\n")
+
+  # Overall interpretation
+  n_significant <- sum(results_summary$significant != "No")
+  n_tests <- nrow(results_summary)
+
+  cat("INTERPRETATION:\n")
+  cat("-" %>% rep(40) %>% paste(collapse = ""), "\n")
+
+  if (n_significant == 0) {
+    cat(">> PASS: No significant effects of current shocks on past outcomes.\n")
+    cat("   This supports the causal interpretation - no reverse causality detected.\n")
+  } else if (n_significant <= 1 && n_tests >= 3) {
+    cat(">> MARGINAL: ", n_significant, " of ", n_tests, " tests show significance.\n", sep = "")
+    cat("   Could be due to multiple testing. Consider Bonferroni correction.\n")
+    cat("   Bonferroni-adjusted alpha:", sprintf("%.4f", ALPHA / n_tests), "\n")
+
+    # Check with Bonferroni
+    bonf_sig_temp <- sum(results_summary$pval_temp < (ALPHA / n_tests))
+    bonf_sig_precip <- sum(results_summary$pval_precip < (ALPHA / n_tests))
+
+    if (bonf_sig_temp == 0 && bonf_sig_precip == 0) {
+      cat("   After Bonferroni correction: No significant effects. PASS.\n")
+    }
+  } else {
+    cat(">> WARNING: ", n_significant, " of ", n_tests, " tests show significance!\n", sep = "")
+    cat("   Current shocks appear to 'predict' past outcomes.\n")
+    cat("   This indicates potential problems:\n")
+    cat("     - Correlated trends between climate and outcomes\n")
+    cat("     - Measurement timing issues\n")
+    cat("     - Omitted time-varying confounders\n")
+    cat("   Consider adding region-year fixed effects or investigating further.\n")
+  }
+
+  # Joint test across all lags
+  if (length(results) >= 2) {
+    cat("\nJoint Wald Test (H0: All lagged outcome coefficients = 0):\n")
+
+    # Collect all temperature coefficients and their variance
+    temp_coefs <- sapply(results, function(m) coef(m)[shock_var])
+    temp_vars <- sapply(results, function(m) se(m)[shock_var]^2)
+
+    # Simple chi-square test (assuming independence across lags for simplicity)
+    chi_sq <- sum(temp_coefs^2 / temp_vars)
+    df <- length(temp_coefs)
+    joint_pval <- pchisq(chi_sq, df = df, lower.tail = FALSE)
+
+    cat("  Chi-square statistic:", sprintf("%.3f", chi_sq), "\n")
+    cat("  Degrees of freedom:  ", df, "\n")
+    cat("  P-value:             ", sprintf("%.4f", joint_pval), "\n")
+
+    if (joint_pval < ALPHA) {
+      cat("\n  >> Joint test REJECTS H0: Evidence of systematic reverse correlation.\n")
+    } else {
+      cat("\n  >> Joint test FAILS TO REJECT H0: No systematic reverse causality.\n")
+    }
+  }
+
+  return(list(
+    models = results,
+    summary = results_summary,
+    dep_var = dep_var
+  ))
+}
+
+# ============================================================================
 # MAIN EXECUTION
 # ============================================================================
 
@@ -865,6 +1069,11 @@ if (!is.null(data_emp)) {
     data_emp_clean, "green_jobs", leads = c(1, 2, 3), lags = c(0, 1, 2, 3, 4, 5),
     label = "Employment"
   )
+
+  # Test 6: Lagged outcome placebo (reverse causality)
+  all_results$emp_lagged_outcome <- run_lagged_outcome_placebo(
+    data_emp_clean, "green_jobs", outcome_lags = c(1, 2, 3, 5), label = "Employment"
+  )
 }
 
 # ============================================================================
@@ -907,6 +1116,11 @@ if (!is.null(data_pat)) {
     data_pat_clean, "qtd_pat_verde", leads = c(1, 2, 3), lags = c(0, 1, 2, 3, 4, 5),
     label = "Patents"
   )
+
+  # Test 6: Lagged outcome placebo (reverse causality)
+  all_results$pat_lagged_outcome <- run_lagged_outcome_placebo(
+    data_pat_clean, "qtd_pat_verde", outcome_lags = c(1, 2, 3, 5), label = "Patents"
+  )
 }
 
 # ============================================================================
@@ -923,7 +1137,8 @@ cat("  1. Pre-trend test with leads (future shocks)\n")
 cat("  2. Low climate variability period analysis\n")
 cat("  3. Distant lag placebo (15-20 year lags)\n")
 cat("  4. Permutation inference placebo\n")
-cat("  5. Event study specification\n\n")
+cat("  5. Event study specification\n")
+cat("  6. Lagged outcome placebo (reverse causality)\n\n")
 
 cat("Key Interpretations:\n")
 cat("-" %>% rep(70) %>% paste(collapse = ""), "\n")
@@ -931,6 +1146,7 @@ cat("  - Lead coefficients should be zero (no anticipation effects)\n")
 cat("  - Distant lags should be insignificant (no spurious correlation)\n")
 cat("  - Permutation p-value < alpha confirms true effect\n")
 cat("  - Event study should show flat pre-trends, effect at t=0\n")
+cat("  - Lagged outcomes should NOT be predicted by current shocks\n")
 cat("-" %>% rep(70) %>% paste(collapse = ""), "\n\n")
 
 cat("If tests fail:\n")
