@@ -21,6 +21,7 @@ weather_quadro_societario <- fread("./Output/Final_base/weather_quadro_societari
 # Função para preparar e analisar os dados
 prepare_and_analyze <- function(data, dependent_variable, file_prefix, additional_grouping = NULL) {
   models_list <- list()
+  temp_only_vars <- c("ma_max_temp", "shock_temp_gt2")
   vars_to_analyze <- list(
     c("ma_shock_temp_10yr", "ma_shock_precip_10yr"),
     c("cont_shock_temp", "cont_shock_precip"),
@@ -30,6 +31,7 @@ prepare_and_analyze <- function(data, dependent_variable, file_prefix, additiona
   
   # Criar a variável estado_ano
   data[, estado_ano := interaction(code_state, year)]
+  data[, shock_temp_gt2 := as.integer(cont_shock_temp > 2)]
   
   # Determinar a parte dos efeitos fixos do modelo
   fixed_effects <- "mun_code + year + estado_ano"
@@ -37,6 +39,12 @@ prepare_and_analyze <- function(data, dependent_variable, file_prefix, additiona
     fixed_effects <- paste(fixed_effects, "+", additional_grouping)
   }
   
+  for (var in temp_only_vars) {
+    formula <- as.formula(paste0(dependent_variable, " ~ ", var, " | ", fixed_effects))
+    fe_model <- feols(formula, data = data, cluster = "mun_code")
+    models_list[[var]] <- fe_model
+  }
+
   for (vars in vars_to_analyze) {
     # Regressões de temperatura e chuva separados
     for (var in vars) {
